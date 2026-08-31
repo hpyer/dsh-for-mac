@@ -2,6 +2,12 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 的记录方式。
 
+## [0.1.1]
+
+### 修复
+
+- 为 macOS 13 及更早系统的内嵌 WebView 补充 `AbortSignal.any` 和 `AbortSignal.timeout` 兼容实现，修复新版 DSH 页面无法加载的问题。
+
 ## [0.1.0] - 初始版本
 
 ### 新增

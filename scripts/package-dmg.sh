@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-PACKAGE_VERSION="${DSHFORMAC_VERSION:-0.1.0}"
+PACKAGE_VERSION="${DSHFORMAC_VERSION:-0.1.1}"
 PACKAGE_ARCH="${DSHFORMAC_ARCH:-universal}"
 APP_NAME="DshForMac"
 OUTPUT_DIR="$ROOT_DIR/dist"
