@@ -59,6 +59,7 @@ DSH 网页中的本机文件链接，以及由用户点击产出物按钮触发�
 ## WebView 与预览安全
 
 - 内嵌 WebView 只允许加载配置端口的 `http://127.0.0.1` DSH 服务；其他链接或文件需要用户确认后才交给浏览器或默认应用。
+- 在加载本机 DSH 页面前，WebView 会仅为缺失的 `AbortSignal.timeout` 和 `AbortSignal.any` 注入兼容实现，以支持 macOS 13 及更早系统自带的 WebKit；系统已提供时不会覆盖原生实现。
 - 产出物桥接只接受用户触发的请求，并使用每次应用启动生成的私有令牌校验消息。
 - 文本、Markdown、图片和 SVG 仅以只读方式预览。预览有文件大小、图片像素和文本长度限制；Markdown 与 SVG 在受限 WebView 中渲染，禁止其脚本和外部导航。
 - DSH 启动命令、端口、版本和 registry 均以结构化参数传入；应用不设置 `DSH_HOME`，不执行 `npm config set`，也不改写用户 shell 配置。

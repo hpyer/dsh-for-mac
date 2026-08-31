@@ -31,6 +31,13 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
         )
         contentController.addUserScript(
             WKUserScript(
+                source: webKitCompatibilityScript(),
+                injectionTime: .atDocumentStart,
+                forMainFrameOnly: true
+            )
+        )
+        contentController.addUserScript(
+            WKUserScript(
                 source: producedFilePreviewBridgeScript(),
                 injectionTime: .atDocumentStart,
                 forMainFrameOnly: true
@@ -508,6 +515,80 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
               });
             }).catch(() => originalFetch(input, init));
           };
+        })();
+        """
+    }
+
+    /// Supplies Web APIs used by recent DSH web releases but absent from the
+    /// WebKit shipped with older supported macOS versions (for example, macOS 13).
+    private func webKitCompatibilityScript() -> String {
+        """
+        (() => {
+          if (typeof AbortSignal === 'undefined' || typeof AbortController === 'undefined') return;
+
+          const abortWithSourceReason = (controller, source) => {
+            try {
+              controller.abort(source && 'reason' in source ? source.reason : undefined);
+            } catch (_) {
+              controller.abort();
+            }
+          };
+
+          if (typeof AbortSignal.timeout !== 'function') {
+            AbortSignal.timeout = (milliseconds) => {
+              const controller = new AbortController();
+              const duration = Number(milliseconds);
+              const delay = Number.isFinite(duration) ? Math.max(0, duration) : 0;
+              window.setTimeout(() => {
+                let reason;
+                try {
+                  reason = new DOMException('The operation timed out.', 'TimeoutError');
+                } catch (_) {
+                  reason = new Error('The operation timed out.');
+                  reason.name = 'TimeoutError';
+                }
+                try {
+                  controller.abort(reason);
+                } catch (_) {
+                  controller.abort();
+                }
+              }, delay);
+              return controller.signal;
+            };
+          }
+
+          if (typeof AbortSignal.any !== 'function') {
+            AbortSignal.any = (signals) => {
+              const sources = Array.from(signals);
+              if (sources.some((source) => !source || typeof source.addEventListener !== 'function')) {
+                throw new TypeError('AbortSignal.any expects AbortSignal instances.');
+              }
+
+              const controller = new AbortController();
+              const listeners = [];
+              let didAbort = false;
+              const abortFrom = (source) => {
+                if (didAbort) return;
+                didAbort = true;
+                listeners.forEach(({ signal, listener }) => signal.removeEventListener('abort', listener));
+                abortWithSourceReason(controller, source);
+              };
+
+              for (const source of sources) {
+                if (source.aborted) {
+                  abortFrom(source);
+                  return controller.signal;
+                }
+              }
+
+              for (const source of sources) {
+                const listener = () => abortFrom(source);
+                listeners.push({ signal: source, listener });
+                source.addEventListener('abort', listener, { once: true });
+              }
+              return controller.signal;
+            };
+          }
         })();
         """
     }
