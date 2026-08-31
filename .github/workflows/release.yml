@@ -114,6 +114,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: 检出代码
+        uses: actions/checkout@v6
+
       - name: 下载 Release 说明
         uses: actions/download-artifact@v4
         with:
