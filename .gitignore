@@ -1,0 +1,15 @@
+# macOS Finder metadata
+.DS_Store
+
+# Swift Package Manager build artifacts and local workspace state
+.build/
+.swiftpm/
+
+# Xcode build products and per-user settings
+DerivedData/
+*.xcuserstate
+*.xcuserdata/
+*.xcscmblueprint
+
+# Release artifacts produced by scripts/package-dmg.sh
+dist/

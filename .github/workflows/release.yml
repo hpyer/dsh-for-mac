@@ -1,0 +1,154 @@
+name: 发布 DshForMac
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    name: 校验发布版本
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v6
+
+      - name: 校验标签与项目版本
+        id: version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          if [[ "$TAG" == "$version" || ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "请使用 v<语义化版本> 标签，例如 v0.1.0。" >&2
+            exit 1
+          fi
+          plist_version="$(sed -n '/<key>CFBundleShortVersionString<\/key>/{n;s/^[[:space:]]*<string>\(.*\)<\/string>$/\1/p;}' Packaging/Info.plist)"
+          source_version="$(sed -nE 's/.*static let version = "([^"]+)".*/\1/p' Sources/DshForMac/Models/AppSettings.swift)"
+          if [[ "$version" != "$plist_version" || "$version" != "$source_version" ]]; then
+            echo "标签版本必须与 Info.plist 和 AppMetadata.version 一致。" >&2
+            exit 1
+          fi
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+
+      - name: 从更新日志生成 Release 说明
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          set -euo pipefail
+          awk -v version="$VERSION" '
+            $0 ~ "^## \\[" version "\\]" { capture = 1; next }
+            capture && /^## / { exit }
+            capture { print }
+          ' CHANGELOG.md > RELEASE_NOTES.md
+          if [[ ! -s RELEASE_NOTES.md ]]; then
+            echo "CHANGELOG.md 中未找到版本 $VERSION 的发布说明。" >&2
+            exit 1
+          fi
+
+      - name: 上传 Release 说明
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: RELEASE_NOTES.md
+          if-no-files-found: error
+
+  build:
+    name: 构建 ${{ matrix.name }}
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Intel
+            runner: macos-15-intel
+            arch: x86_64
+            asset_suffix: intel
+          - name: Apple Silicon
+            runner: macos-14
+            arch: arm64
+            asset_suffix: apple-silicon
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v6
+
+      - name: 运行测试
+        run: swift test --arch "${{ matrix.arch }}"
+
+      - name: 构建 release 二进制
+        run: swift build -c release --arch "${{ matrix.arch }}"
+
+      - name: 生成 ${{ matrix.name }} DMG
+        id: package
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+          ASSET_SUFFIX: ${{ matrix.asset_suffix }}
+        run: |
+          set -euo pipefail
+          DSHFORMAC_VERSION="$VERSION" DSHFORMAC_ARCH="$ARCH" DSHFORMAC_SKIP_BUILD="1" ./scripts/package-dmg.sh
+          echo "dmg_name=DshForMac-${VERSION}-${ASSET_SUFFIX}-unsigned.dmg" >> "$GITHUB_OUTPUT"
+
+      - name: 上传 ${{ matrix.name }} DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-dmg-${{ matrix.arch }}
+          path: dist/${{ steps.package.outputs.dmg_name }}
+          if-no-files-found: error
+
+  release:
+    name: 创建 GitHub Release
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 下载 Release 说明
+        uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+          path: release-notes
+
+      - name: 下载 DMG 文件
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-dmg-*
+          path: release-artifact
+          merge-multiple: true
+
+      - name: 确保 GitHub CLI 可用
+        run: |
+          set -euo pipefail
+          if ! command -v gh >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install --yes gh
+          fi
+          gh --version
+
+      - name: 创建或更新 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          TITLE: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          dmg_files=(release-artifact/*.dmg)
+          if [[ ${#dmg_files[@]} -ne 2 ]]; then
+            echo "应生成两个架构专用 DMG，实际找到 ${#dmg_files[@]} 个。" >&2
+            exit 1
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "$TITLE" --notes-file release-notes/RELEASE_NOTES.md
+            gh release upload "$TAG" "${dmg_files[@]}" --clobber
+          else
+            gh release create "$TAG" "${dmg_files[@]}" --title "$TITLE" --notes-file release-notes/RELEASE_NOTES.md
+          fi

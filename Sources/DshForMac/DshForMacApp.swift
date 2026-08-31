@@ -1,0 +1,359 @@
+import AppKit
+
+@main
+struct DshForMacMain {
+    @MainActor
+    static func main() {
+        let application = NSApplication.shared
+        application.setActivationPolicy(.regular)
+
+        let delegate = AppDelegate()
+        application.delegate = delegate
+        application.run()
+    }
+}
+
+@MainActor
+private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate {
+    private var windowController: NSWindowController?
+    private var settingsWindowController: NSWindowController?
+    private weak var mainViewController: MainViewController?
+    private let serviceIndicator = NSButton(title: "正在启动", target: nil, action: nil)
+    private var statusItem: NSStatusItem?
+    private var serviceStatus = "正在启动 DSH…"
+    private var isServiceRunning = false
+    private var updateCheckStatus = ""
+
+    private enum ToolbarIdentifier {
+        static let serviceStatus = NSToolbarItem.Identifier("serviceStatus")
+        static let restart = NSToolbarItem.Identifier("restart")
+        static let settings = NSToolbarItem.Identifier("settings")
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.applicationIconImage = AppIcon.image()
+        configureMainMenu()
+        configureStatusItem()
+
+        let contentViewController = MainViewController()
+        contentViewController.onServiceStatusChanged = { [weak self] status, isRunning in
+            self?.updateServiceStatus(status, isRunning: isRunning)
+        }
+        contentViewController.onUpdateCheckStatusChanged = { [weak self] status in
+            self?.updateUpdateCheckStatus(status)
+        }
+        mainViewController = contentViewController
+        let initialContentSize = NSSize(width: 1_280, height: 720)
+
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: initialContentSize),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "DeepSeek Harness for Mac"
+        window.center()
+        window.contentViewController = contentViewController
+        window.setContentSize(initialContentSize)
+        window.contentMinSize = NSSize(width: 390, height: 360)
+        window.styleMask.insert(.resizable)
+        configureToolbar(for: window)
+
+        windowController = NSWindowController(window: window)
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard !flag, let window = windowController?.window else { return true }
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        return true
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        mainViewController?.stopDeepSeekHarness()
+    }
+
+    private func configureToolbar(for window: NSWindow) {
+        serviceIndicator.isBordered = false
+        serviceIndicator.imagePosition = .imageLeading
+        serviceIndicator.font = .systemFont(ofSize: 13, weight: .medium)
+        serviceIndicator.setContentHuggingPriority(.required, for: .horizontal)
+
+        let toolbar = NSToolbar(identifier: "DshForMacToolbar")
+        toolbar.delegate = self
+        toolbar.displayMode = .iconOnly
+        toolbar.allowsUserCustomization = false
+        toolbar.autosavesConfiguration = false
+        window.toolbar = toolbar
+        window.toolbarStyle = .unified
+        updateServiceStatus(serviceStatus, isRunning: isServiceRunning)
+    }
+
+    private func configureStatusItem() {
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        item.button?.image = AppIcon.menuBarImage()
+        item.button?.imagePosition = .imageOnly
+        item.button?.toolTip = "DshForMac"
+
+        let menu = NSMenu()
+        let restartItem = NSMenuItem(
+            title: "一键重启 DSH",
+            action: #selector(restartDeepSeekHarness),
+            keyEquivalent: "r"
+        )
+        restartItem.keyEquivalentModifierMask = [.command, .shift]
+        restartItem.target = self
+        menu.addItem(restartItem)
+
+        let versionItem = NSMenuItem(
+            title: "DshForMac \(AppMetadata.version)",
+            action: nil,
+            keyEquivalent: ""
+        )
+        versionItem.isEnabled = false
+        menu.addItem(versionItem)
+        menu.addItem(.separator())
+
+        let quitItem = NSMenuItem(title: "退出 DshForMac", action: #selector(quit), keyEquivalent: "q")
+        quitItem.target = self
+        menu.addItem(quitItem)
+        item.menu = menu
+        statusItem = item
+    }
+
+    private func configureMainMenu() {
+        let mainMenu = NSMenu()
+
+        let applicationMenuItem = NSMenuItem()
+        let applicationMenu = NSMenu(title: "DshForMac")
+        let settingsItem = NSMenuItem(title: "设置…", action: #selector(showSettings), keyEquivalent: ",")
+        settingsItem.target = self
+        applicationMenu.addItem(settingsItem)
+        applicationMenu.addItem(.separator())
+        let restartItem = NSMenuItem(title: "一键重启 DSH", action: #selector(restartDeepSeekHarness), keyEquivalent: "r")
+        restartItem.keyEquivalentModifierMask = [.command, .shift]
+        restartItem.target = self
+        applicationMenu.addItem(restartItem)
+        applicationMenu.addItem(.separator())
+        let quitItem = NSMenuItem(title: "退出 DshForMac", action: #selector(quit), keyEquivalent: "q")
+        quitItem.target = self
+        applicationMenu.addItem(quitItem)
+        applicationMenuItem.submenu = applicationMenu
+        mainMenu.addItem(applicationMenuItem)
+
+        let fileMenuItem = NSMenuItem()
+        let fileMenu = NSMenu(title: "文件")
+        fileMenu.addItem(NSMenuItem(title: "关闭窗口", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
+        fileMenuItem.submenu = fileMenu
+        mainMenu.addItem(fileMenuItem)
+
+        let editMenuItem = NSMenuItem()
+        let editMenu = NSMenu(title: "编辑")
+        editMenu.addItem(NSMenuItem(title: "撤销", action: Selector(("undo:")), keyEquivalent: "z"))
+        let redoItem = NSMenuItem(title: "重做", action: Selector(("redo:")), keyEquivalent: "z")
+        redoItem.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(redoItem)
+        editMenu.addItem(.separator())
+        editMenu.addItem(NSMenuItem(title: "剪切", action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
+        editMenu.addItem(NSMenuItem(title: "复制", action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
+        editMenu.addItem(NSMenuItem(title: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
+        editMenu.addItem(.separator())
+        editMenu.addItem(NSMenuItem(title: "全选", action: #selector(NSResponder.selectAll(_:)), keyEquivalent: "a"))
+        editMenuItem.submenu = editMenu
+        mainMenu.addItem(editMenuItem)
+
+        let findMenuItem = NSMenuItem()
+        let findMenu = NSMenu(title: "查找")
+        findMenu.addItem(textFinderMenuItem(
+            title: "查找…",
+            action: .showFindInterface,
+            keyEquivalent: "f",
+            modifierMask: .command
+        ))
+        findMenu.addItem(textFinderMenuItem(
+            title: "查找下一个",
+            action: .nextMatch,
+            keyEquivalent: "g",
+            modifierMask: .command
+        ))
+        findMenu.addItem(textFinderMenuItem(
+            title: "查找上一个",
+            action: .previousMatch,
+            keyEquivalent: "g",
+            modifierMask: [.command, .shift]
+        ))
+        findMenuItem.submenu = findMenu
+        mainMenu.addItem(findMenuItem)
+
+        let viewMenuItem = NSMenuItem()
+        let viewMenu = NSMenu(title: "显示")
+        let reloadItem = NSMenuItem(title: "重新加载 DSH", action: #selector(reloadDeepSeekHarness), keyEquivalent: "r")
+        reloadItem.target = self
+        viewMenu.addItem(reloadItem)
+        viewMenuItem.submenu = viewMenu
+        mainMenu.addItem(viewMenuItem)
+
+        let windowMenuItem = NSMenuItem()
+        let windowMenu = NSMenu(title: "窗口")
+        windowMenu.addItem(NSMenuItem(title: "最小化", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m"))
+        windowMenu.addItem(NSMenuItem(title: "缩放", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: ""))
+        windowMenuItem.submenu = windowMenu
+        mainMenu.addItem(windowMenuItem)
+
+        NSApp.mainMenu = mainMenu
+    }
+
+    private func textFinderMenuItem(
+        title: String,
+        action: NSTextFinder.Action,
+        keyEquivalent: String,
+        modifierMask: NSEvent.ModifierFlags
+    ) -> NSMenuItem {
+        let item = NSMenuItem(
+            title: title,
+            action: #selector(NSResponder.performTextFinderAction(_:)),
+            keyEquivalent: keyEquivalent
+        )
+        item.keyEquivalentModifierMask = modifierMask
+        item.tag = action.rawValue
+        return item
+    }
+
+    private func updateServiceStatus(_ status: String, isRunning: Bool) {
+        serviceStatus = status
+        isServiceRunning = isRunning
+        serviceIndicator.title = status
+        serviceIndicator.image = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: nil)
+        serviceIndicator.contentTintColor = status.contains("失败") ? .systemRed : (isRunning ? .systemGreen : .systemOrange)
+        serviceIndicator.toolTip = status
+        statusItem?.button?.toolTip = "DshForMac · \(status)"
+        (settingsWindowController?.contentViewController as? SettingsViewController)?.update(
+            serviceStatus: status,
+            runtimeVersion: mainViewController?.activeDSHVersion,
+            installedVersions: mainViewController?.installedDSHVersions() ?? [],
+            updateCheckStatus: updateCheckStatus
+        )
+    }
+
+    private func updateUpdateCheckStatus(_ status: String) {
+        updateCheckStatus = status
+        (settingsWindowController?.contentViewController as? SettingsViewController)?.update(
+            serviceStatus: serviceStatus,
+            runtimeVersion: mainViewController?.activeDSHVersion,
+            installedVersions: mainViewController?.installedDSHVersions() ?? [],
+            updateCheckStatus: status
+        )
+    }
+
+    @objc private func restartDeepSeekHarness() {
+        mainViewController?.restartDeepSeekHarness()
+    }
+
+    @objc private func reloadDeepSeekHarness() {
+        mainViewController?.reloadWebInterface()
+    }
+
+    @objc private func showSettings() {
+        updateCheckStatus = ""
+        if settingsWindowController == nil {
+            let settingsViewController = SettingsViewController(
+                onApply: { [weak self] _, version, _, _, restartRequired in
+                    guard let self else { return }
+                    if restartRequired {
+                        self.confirmRestartAfterSaving(version: version)
+                    }
+                },
+                onCheckUpdates: { [weak self] in
+                    self?.mainViewController?.checkForUpdatesNow()
+                },
+                onOpenVersionsDirectory: { [weak self] in
+                    self?.mainViewController?.openRuntimeVersionsDirectory()
+                }
+            )
+            let settingsWindow = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 500, height: 330),
+                styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                backing: .buffered,
+                defer: false
+            )
+            settingsWindow.title = "DshForMac 设置"
+            settingsWindow.isReleasedWhenClosed = false
+            settingsWindow.contentMinSize = NSSize(width: 500, height: 330)
+            settingsWindow.styleMask.insert(.resizable)
+            settingsWindow.contentViewController = settingsViewController
+            settingsWindow.center()
+            settingsWindowController = NSWindowController(window: settingsWindow)
+        }
+
+        (settingsWindowController?.contentViewController as? SettingsViewController)?.update(
+            serviceStatus: serviceStatus,
+            runtimeVersion: mainViewController?.activeDSHVersion,
+            installedVersions: mainViewController?.installedDSHVersions() ?? [],
+            updateCheckStatus: updateCheckStatus
+        )
+        settingsWindowController?.showWindow(nil)
+        settingsWindowController?.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func confirmRestartAfterSaving(version: String?) {
+        let alert = NSAlert()
+        alert.messageText = "设置已保存"
+        alert.informativeText = "运行端口或 DSH 版本已变更，是否立即重启 DSH 以应用新设置？"
+        alert.addButton(withTitle: "立即重启")
+        alert.addButton(withTitle: "稍后")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        mainViewController?.selectDSHVersion(version)
+    }
+
+    @objc private func quit() {
+        NSApp.terminate(nil)
+    }
+
+    func toolbar(
+        _ toolbar: NSToolbar,
+        itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
+        willBeInsertedIntoToolbar flag: Bool
+    ) -> NSToolbarItem? {
+        switch itemIdentifier {
+        case ToolbarIdentifier.serviceStatus:
+            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            item.view = serviceIndicator
+            item.label = "运行状态"
+            item.toolTip = "运行状态"
+            return item
+        case ToolbarIdentifier.restart:
+            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            item.label = "重启"
+            item.toolTip = "一键重启 DSH"
+            item.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "重启")
+            item.target = self
+            item.action = #selector(restartDeepSeekHarness)
+            return item
+        case ToolbarIdentifier.settings:
+            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            item.label = "设置"
+            item.toolTip = "设置"
+            item.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: "设置")
+            item.target = self
+            item.action = #selector(showSettings)
+            return item
+        default:
+            return nil
+        }
+    }
+
+    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        [.flexibleSpace, ToolbarIdentifier.serviceStatus, ToolbarIdentifier.restart, ToolbarIdentifier.settings]
+    }
+
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        toolbarDefaultItemIdentifiers(toolbar)
+    }
+}
