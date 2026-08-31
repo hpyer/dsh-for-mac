@@ -72,7 +72,7 @@ jobs:
             arch: x86_64
             asset_suffix: intel
           - name: Apple Silicon
-            runner: macos-14
+            runner: macos-15
             arch: arm64
             asset_suffix: apple-silicon
     runs-on: ${{ matrix.runner }}
@@ -80,6 +80,9 @@ jobs:
     steps:
       - name: 检出代码
         uses: actions/checkout@v6
+
+      - name: 显示 Swift 工具链版本
+        run: swift --version
 
       - name: 运行测试
         run: swift test --arch "${{ matrix.arch }}"

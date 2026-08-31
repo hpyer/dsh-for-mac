@@ -68,7 +68,7 @@ swift run DshForMac
 
 ## 自动发布
 
-推送形如 `v0.1.0` 的语义化 Git 标签会触发 GitHub Actions。工作流会在 Intel 和 Apple Silicon macOS Runner 分别构建、测试和打包，向同一个 GitHub Release 上传两个架构专用 DMG。Release 标题使用去除 `v` 前缀后的版本号，说明内容从 `CHANGELOG.md` 中同一版本的章节提取。
+推送形如 `v0.1.0` 的语义化 Git 标签会触发 GitHub Actions。工作流会在 `macos-15-intel` 和 Apple Silicon `macos-15` Runner 分别构建、测试和打包，向同一个 GitHub Release 上传两个架构专用 DMG。Release 标题使用去除 `v` 前缀后的版本号，说明内容从 `CHANGELOG.md` 中同一版本的章节提取。
 
 发布前请同步更新 `Packaging/Info.plist`、`AppMetadata.version` 和 `CHANGELOG.md` 中的版本号；工作流会校验它们必须与标签一致。
 
