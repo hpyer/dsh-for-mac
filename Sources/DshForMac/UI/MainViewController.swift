@@ -577,6 +577,19 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
 
           window.fetch = function(input, init) {
             const requestURL = input instanceof Request ? input.url : String(input);
+            const request = new URL(requestURL, window.location.href);
+            const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
+            const isMarketRestartRequest = request.origin === window.location.origin
+              && request.pathname === '/dsh-market/restart'
+              && method === 'POST';
+            if (isMarketRestartRequest) {
+              bridge.postMessage({ action: 'restart', token: '\(previewBridgeToken)' });
+              return Promise.resolve(new Response(JSON.stringify({ ok: true, managed: true }), {
+                status: 202,
+                headers: { 'content-type': 'application/json' }
+              }));
+            }
+
             const isOpenPathRequest = new URL(requestURL, window.location.href).pathname.endsWith('/api/host.openPath');
             if (!pendingClick || pendingClick.expiresAt < Date.now() || !isOpenPathRequest) {
               return originalFetch(input, init);
@@ -688,8 +701,17 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
         guard message.name == Self.producedFilePreviewHandlerName,
               message.frameInfo.isMainFrame,
               let payload = message.body as? [String: Any],
-              payload["token"] as? String == previewBridgeToken,
-              let path = payload["path"] as? String,
+              payload["token"] as? String == previewBridgeToken
+        else {
+            return
+        }
+
+        if payload["action"] as? String == "restart" {
+            restartDeepSeekHarness()
+            return
+        }
+
+        guard let path = payload["path"] as? String,
               path.hasPrefix("/")
         else {
             return
