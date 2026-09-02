@@ -4,6 +4,7 @@ import WebKit
 final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
     var onServiceStatusChanged: ((String, Bool) -> Void)?
     var onUpdateCheckStatusChanged: ((String) -> Void)?
+    var onUpdateAvailableVersionChanged: ((String?) -> Void)?
 
     private let titleLabel = NSTextField(labelWithString: "DeepSeek Harness for Mac")
     private let statusLabel = NSTextField(labelWithString: "正在检测 Node.js…")
@@ -49,19 +50,25 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
         webView.uiDelegate = self
         return webView
     }()
-    private lazy var runtimeManager = DSHRuntimeManager { [weak self] status in
-        self?.statusLabel.stringValue = status
-        guard let self else { return }
-        if self.isLaunchingDeepSeekHarness {
-            self.reportStartupStatus(status)
-        } else {
-            self.reportServiceStatus(status, isRunning: false)
+    private lazy var runtimeManager = DSHRuntimeManager(
+        statusHandler: { [weak self] status in
+            self?.statusLabel.stringValue = status
+            guard let self else { return }
+            if self.isLaunchingDeepSeekHarness {
+                self.reportStartupStatus(status)
+            } else {
+                self.reportServiceStatus(status, isRunning: false)
+            }
+        },
+        unexpectedTerminationHandler: { [weak self] statusCode, diagnostic in
+            self?.handleUnexpectedTermination(statusCode: statusCode, diagnostic: diagnostic)
         }
-    }
+    )
     private var didShowMissingNodeAlert = false
     private var isLaunchingDeepSeekHarness = false
     private var didCompleteInitialStartup = false
     private var failedDSHVersion: String?
+    private var isCheckingForUpdates = false
     private var previewWidthConstraint: NSLayoutConstraint?
     private var pendingPreviewResponseURLs = Set<URL>()
     private(set) var activeDSHVersion: String?
@@ -157,6 +164,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
                 let result = try await self.runtimeManager.start(using: runtime)
                 self.isLaunchingDeepSeekHarness = false
                 self.activeDSHVersion = result.version
+                self.refreshAvailableUpdateVersion()
                 self.failedDSHVersion = nil
                 self.showWebInterface(at: result.address)
                 self.reportServiceStatus("运行中 · \(result.version)", isRunning: true)
@@ -169,22 +177,25 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
         }
     }
 
-    private func restartDeepSeekHarness(using runtime: NodeRuntime) {
+    private func restartDeepSeekHarness(using runtime: NodeRuntime, preferredVersion: String? = nil) {
         guard !isLaunchingDeepSeekHarness else { return }
         isLaunchingDeepSeekHarness = true
         primaryButton.isEnabled = false
         redownloadButton.isEnabled = false
         statusLabel.stringValue = "正在重启 DSH…"
-        detailLabel.stringValue = "将直接重启当前 DSH 版本，不检查更新。"
+        detailLabel.stringValue = preferredVersion == nil
+            ? "将直接重启当前 DSH 版本，不检查更新。"
+            : "将启动所选 DSH 版本，不检查更新。"
         reportStartupStatus("正在重启 DSH…")
 
-        let version = activeDSHVersion ?? failedDSHVersion
+        let version = preferredVersion ?? activeDSHVersion ?? failedDSHVersion
         Task { [weak self] in
             guard let self else { return }
             do {
                 let result = try await self.runtimeManager.restart(using: runtime, preferredVersion: version)
                 self.isLaunchingDeepSeekHarness = false
                 self.activeDSHVersion = result.version
+                self.refreshAvailableUpdateVersion()
                 self.failedDSHVersion = nil
                 self.showWebInterface(at: result.address)
                 self.reportServiceStatus("运行中 · \(result.version)", isRunning: true)
@@ -245,6 +256,21 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
         reportServiceStatus("DSH 启动失败", isRunning: false)
     }
 
+    private func handleUnexpectedTermination(statusCode: Int32, diagnostic: String?) {
+        guard !isLaunchingDeepSeekHarness else { return }
+        showEnvironmentView()
+        primaryButton.isEnabled = true
+        redownloadButton.isEnabled = true
+        chooseNodeButton.isHidden = true
+        nodeWebsiteButton.isHidden = true
+        statusLabel.stringValue = "DSH 已退出（状态码 \(statusCode)）"
+        detailLabel.stringValue = diagnostic ?? "DSH 在运行中意外退出。请尝试重新启动或切换到其他已安装版本。"
+        primaryButton.title = "重新启动 DSH"
+        primaryButton.isHidden = false
+        redownloadButton.isHidden = false
+        reportServiceStatus("DSH 已退出（状态码 \(statusCode)）。", isRunning: false)
+    }
+
     func stopDeepSeekHarness() {
         runtimeManager.stop()
         activeDSHVersion = nil
@@ -268,7 +294,13 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
 
     func selectDSHVersion(_ version: String?) {
         AppSettings.shared.selectedRuntimeVersion = version
-        restartDeepSeekHarness()
+        guard !isLaunchingDeepSeekHarness else { return }
+        let status = NodeRuntimeDetector().detect(preferredNodeURL: preferredNodeURL)
+        guard case let .ready(runtime) = status else {
+            refreshRuntimeStatus()
+            return
+        }
+        restartDeepSeekHarness(using: runtime, preferredVersion: version)
     }
 
     func installedDSHVersions() -> [String] {
@@ -409,6 +441,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
                 let result = try await self.runtimeManager.downloadLatestAndStart(using: runtime)
                 self.isLaunchingDeepSeekHarness = false
                 self.activeDSHVersion = result.version
+                self.refreshAvailableUpdateVersion()
                 self.failedDSHVersion = nil
                 self.showWebInterface(at: result.address)
                 self.reportServiceStatus("运行中 · \(result.version)", isRunning: true)
@@ -426,27 +459,85 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     }
 
     private func performUpdateCheck(using runtime: NodeRuntime) {
+        guard !isCheckingForUpdates else {
+            onUpdateCheckStatusChanged?("正在检查更新…")
+            return
+        }
+        isCheckingForUpdates = true
         onUpdateCheckStatusChanged?("正在检查更新…")
         Task { [weak self] in
             guard let self else { return }
+            defer { self.isCheckingForUpdates = false }
             do {
                 let result = try await self.runtimeManager.checkForUpdates(
                     using: runtime,
-                    reportsProgress: false
+                    reportsProgress: false,
+                    updateStatusHandler: { [weak self] status in
+                        self?.onUpdateCheckStatusChanged?(status)
+                    }
                 )
                 AppSettings.shared.lastUpdateCheckDate = Date()
+                self.recordAvailableUpdateVersion(result.version)
+                let unavailableSuffix = result.unavailableTags.isEmpty
+                    ? ""
+                    : "（未能检查 \(result.unavailableTags.joined(separator: "、"))）"
                 let message: String
                 switch result {
-                case let .downloaded(version):
-                    message = "有新版本 \(version)，已下载。"
-                case let .alreadyInstalled(version):
-                    message = "已是最新版本（\(version)）。"
+                case .downloaded:
+                    message = updateDownloadedMessage(
+                        version: result.version,
+                        unavailableSuffix: unavailableSuffix
+                    )
+                case .alreadyInstalled:
+                    message = updateInstalledMessage(
+                        version: result.version,
+                        unavailableSuffix: unavailableSuffix
+                    )
                 }
                 self.onUpdateCheckStatusChanged?(message)
             } catch {
                 self.onUpdateCheckStatusChanged?("失败：\(error.localizedDescription)")
             }
         }
+    }
+
+    private func updateDownloadedMessage(
+        version: String,
+        unavailableSuffix: String
+    ) -> String {
+        return "新版本 \(version) 已下载。\(unavailableSuffix)"
+    }
+
+    private func updateInstalledMessage(
+        version: String,
+        unavailableSuffix: String
+    ) -> String {
+        guard let activeDSHVersion, activeDSHVersion != version else {
+            return "当前正在运行最新版本。\(unavailableSuffix)"
+        }
+        return "新版本 \(version) 已下载。\(unavailableSuffix)"
+    }
+
+    private func recordAvailableUpdateVersion(_ version: String) {
+        let availableVersion: String?
+        if let activeDSHVersion,
+           let activeVersion = SemanticVersion(string: activeDSHVersion),
+           let candidateVersion = SemanticVersion(string: version)
+        {
+            availableVersion = activeVersion < candidateVersion ? version : nil
+        } else {
+            availableVersion = version == activeDSHVersion ? nil : version
+        }
+        AppSettings.shared.availableUpdateVersion = availableVersion
+        onUpdateAvailableVersionChanged?(availableVersion)
+    }
+
+    private func refreshAvailableUpdateVersion() {
+        guard let availableVersion = AppSettings.shared.availableUpdateVersion else {
+            onUpdateAvailableVersionChanged?(nil)
+            return
+        }
+        recordAvailableUpdateVersion(availableVersion)
     }
 
     private func reportServiceStatus(_ status: String, isRunning: Bool) {
@@ -660,6 +751,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
         guard let url = response.url,
               pendingPreviewResponseURLs.remove(url) != nil,
               isLocalDSHURL(url),
+              url.path != "/",
               let mimeType = response.mimeType?.lowercased(),
               mimeType != "text/html",
               mimeType != "application/xhtml+xml"

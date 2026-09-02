@@ -57,6 +57,22 @@ enum DSHUpdateCheckInterval: String, CaseIterable, Sendable {
     }
 }
 
+enum DSHUpdateChannel: String, CaseIterable, Sendable {
+    case alpha
+    case beta
+    case next
+
+    var displayName: String {
+        switch self {
+        case .alpha: "alpha"
+        case .beta: "beta"
+        case .next: "next"
+        }
+    }
+
+    var additionalTag: String { rawValue }
+}
+
 @MainActor
 final class AppSettings {
     static let shared = AppSettings()
@@ -66,7 +82,10 @@ final class AppSettings {
         static let selectedRuntimeVersion = "selectedRuntimeVersion"
         static let port = "dshPort"
         static let updateCheckInterval = "dshUpdateCheckInterval"
+        static let additionalUpdateTagEnabled = "dshAdditionalUpdateTagEnabled"
+        static let updateChannel = "dshUpdateChannel"
         static let lastUpdateCheckDate = "dshLastUpdateCheckDate"
+        static let availableUpdateVersion = "dshAvailableUpdateVersion"
     }
 
     private let defaults: UserDefaults
@@ -85,7 +104,9 @@ final class AppSettings {
             return registry
         }
         set {
+            guard registry != newValue else { return }
             defaults.set(newValue.rawValue, forKey: Key.registry)
+            lastUpdateCheckDate = nil
         }
     }
 
@@ -124,6 +145,31 @@ final class AppSettings {
         }
     }
 
+    var updateChannel: DSHUpdateChannel {
+        get {
+            guard let value = defaults.string(forKey: Key.updateChannel),
+                  let channel = DSHUpdateChannel(rawValue: value)
+            else {
+                return .alpha
+            }
+            return channel
+        }
+        set {
+            guard updateChannel != newValue else { return }
+            defaults.set(newValue.rawValue, forKey: Key.updateChannel)
+            lastUpdateCheckDate = nil
+        }
+    }
+
+    var additionalUpdateTagEnabled: Bool {
+        get { defaults.bool(forKey: Key.additionalUpdateTagEnabled) }
+        set {
+            guard additionalUpdateTagEnabled != newValue else { return }
+            defaults.set(newValue, forKey: Key.additionalUpdateTagEnabled)
+            lastUpdateCheckDate = nil
+        }
+    }
+
     var lastUpdateCheckDate: Date? {
         get { defaults.object(forKey: Key.lastUpdateCheckDate) as? Date }
         set {
@@ -131,6 +177,17 @@ final class AppSettings {
                 defaults.set(newValue, forKey: Key.lastUpdateCheckDate)
             } else {
                 defaults.removeObject(forKey: Key.lastUpdateCheckDate)
+            }
+        }
+    }
+
+    var availableUpdateVersion: String? {
+        get { defaults.string(forKey: Key.availableUpdateVersion) }
+        set {
+            if let newValue {
+                defaults.set(newValue, forKey: Key.availableUpdateVersion)
+            } else {
+                defaults.removeObject(forKey: Key.availableUpdateVersion)
             }
         }
     }

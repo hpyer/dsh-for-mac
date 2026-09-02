@@ -19,12 +19,15 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
     private var settingsWindowController: NSWindowController?
     private weak var mainViewController: MainViewController?
     private let serviceIndicator = NSButton(title: "正在启动", target: nil, action: nil)
+    private let updateAvailableIndicator = NSButton(title: "有新版本", target: nil, action: nil)
+    private weak var mainToolbar: NSToolbar?
     private var statusItem: NSStatusItem?
     private var serviceStatus = "正在启动 DSH…"
     private var isServiceRunning = false
     private var updateCheckStatus = ""
 
     private enum ToolbarIdentifier {
+        static let updateAvailable = NSToolbarItem.Identifier("updateAvailable")
         static let serviceStatus = NSToolbarItem.Identifier("serviceStatus")
         static let restart = NSToolbarItem.Identifier("restart")
         static let settings = NSToolbarItem.Identifier("settings")
@@ -41,6 +44,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
         }
         contentViewController.onUpdateCheckStatusChanged = { [weak self] status in
             self?.updateUpdateCheckStatus(status)
+        }
+        contentViewController.onUpdateAvailableVersionChanged = { [weak self] version in
+            self?.updateAvailableUpdateIndicator(version: version)
         }
         mainViewController = contentViewController
         let initialContentSize = NSSize(width: 1_280, height: 720)
@@ -84,12 +90,25 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
         serviceIndicator.imagePosition = .imageLeading
         serviceIndicator.font = .systemFont(ofSize: 13, weight: .medium)
         serviceIndicator.setContentHuggingPriority(.required, for: .horizontal)
+        updateAvailableIndicator.isBordered = false
+        updateAvailableIndicator.image = NSImage(
+            systemSymbolName: "arrow.down.circle.fill",
+            accessibilityDescription: "有新版本"
+        )
+        updateAvailableIndicator.imagePosition = .imageLeading
+        updateAvailableIndicator.contentTintColor = .systemBlue
+        updateAvailableIndicator.font = .systemFont(ofSize: 13, weight: .medium)
+        updateAvailableIndicator.target = self
+        updateAvailableIndicator.action = #selector(showSettings)
+        updateAvailableIndicator.setContentHuggingPriority(.required, for: .horizontal)
+        updateAvailableUpdateIndicator(version: AppSettings.shared.availableUpdateVersion)
 
         let toolbar = NSToolbar(identifier: "DshForMacToolbar")
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
         toolbar.allowsUserCustomization = false
         toolbar.autosavesConfiguration = false
+        mainToolbar = toolbar
         window.toolbar = toolbar
         window.toolbarStyle = .unified
         updateServiceStatus(serviceStatus, isRunning: isServiceRunning)
@@ -251,6 +270,25 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
         )
     }
 
+    private func updateAvailableUpdateIndicator(version: String?) {
+        updateAvailableIndicator.toolTip = version.map { "已下载新版本 \($0)，点击查看设置" }
+        guard let mainToolbar else { return }
+
+        if version != nil {
+            guard !mainToolbar.items.contains(where: { $0.itemIdentifier == ToolbarIdentifier.updateAvailable }) else {
+                return
+            }
+            let insertionIndex = mainToolbar.items.firstIndex {
+                $0.itemIdentifier == ToolbarIdentifier.serviceStatus
+            } ?? mainToolbar.items.count
+            mainToolbar.insertItem(withItemIdentifier: ToolbarIdentifier.updateAvailable, at: insertionIndex)
+        } else if let index = mainToolbar.items.firstIndex(where: {
+            $0.itemIdentifier == ToolbarIdentifier.updateAvailable
+        }) {
+            mainToolbar.removeItem(at: index)
+        }
+    }
+
     @objc private func restartDeepSeekHarness() {
         mainViewController?.restartDeepSeekHarness()
     }
@@ -260,10 +298,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
     }
 
     @objc private func showSettings() {
-        updateCheckStatus = ""
         if settingsWindowController == nil {
             let settingsViewController = SettingsViewController(
-                onApply: { [weak self] _, version, _, _, restartRequired in
+                onApply: { [weak self] version, restartRequired in
                     guard let self else { return }
                     if restartRequired {
                         self.confirmRestartAfterSaving(version: version)
@@ -277,15 +314,14 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
                 }
             )
             let settingsWindow = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 500, height: 330),
-                styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                contentRect: NSRect(x: 0, y: 0, width: 440, height: 330),
+                styleMask: [.titled, .closable, .miniaturizable],
                 backing: .buffered,
                 defer: false
             )
             settingsWindow.title = "DshForMac 设置"
             settingsWindow.isReleasedWhenClosed = false
-            settingsWindow.contentMinSize = NSSize(width: 500, height: 330)
-            settingsWindow.styleMask.insert(.resizable)
+            settingsWindow.contentMinSize = NSSize(width: 440, height: 330)
             settingsWindow.contentViewController = settingsViewController
             settingsWindow.center()
             settingsWindowController = NSWindowController(window: settingsWindow)
@@ -322,6 +358,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
         willBeInsertedIntoToolbar flag: Bool
     ) -> NSToolbarItem? {
         switch itemIdentifier {
+        case ToolbarIdentifier.updateAvailable:
+            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            item.view = updateAvailableIndicator
+            item.label = "有新版本"
+            item.toolTip = updateAvailableIndicator.toolTip
+            return item
         case ToolbarIdentifier.serviceStatus:
             let item = NSToolbarItem(itemIdentifier: itemIdentifier)
             item.view = serviceIndicator
@@ -350,7 +392,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.flexibleSpace, ToolbarIdentifier.serviceStatus, ToolbarIdentifier.restart, ToolbarIdentifier.settings]
+        var identifiers: [NSToolbarItem.Identifier] = [.flexibleSpace]
+        if AppSettings.shared.availableUpdateVersion != nil {
+            identifiers.append(ToolbarIdentifier.updateAvailable)
+        }
+        identifiers += [ToolbarIdentifier.serviceStatus, ToolbarIdentifier.restart, ToolbarIdentifier.settings]
+        return identifiers
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {

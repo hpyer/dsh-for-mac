@@ -4,6 +4,7 @@ import Darwin
 struct DSHRelease: Decodable, Sendable {
     let version: String
     let integrity: String
+    let sourceTags: Set<String>
 
     enum CodingKeys: String, CodingKey {
         case version
@@ -19,6 +20,13 @@ struct DSHRelease: Decodable, Sendable {
         } else {
             integrity = try container.decode(String.self, forKey: DynamicCodingKey("dist.integrity"))
         }
+        sourceTags = []
+    }
+
+    init(version: String, integrity: String, sourceTags: Set<String>) {
+        self.version = version
+        self.integrity = integrity
+        self.sourceTags = sourceTags
     }
 
     private struct Distribution: Decodable, Sendable {
@@ -32,12 +40,24 @@ struct DSHStartupResult: Sendable {
 }
 
 enum DSHUpdateCheckResult: Sendable {
-    case downloaded(String)
-    case alreadyInstalled(String)
+    case downloaded(DSHRelease, unavailableTags: [String])
+    case alreadyInstalled(DSHRelease, unavailableTags: [String])
 
     var version: String {
         switch self {
-        case let .downloaded(version), let .alreadyInstalled(version): version
+        case let .downloaded(release, _), let .alreadyInstalled(release, _): release.version
+        }
+    }
+
+    var sourceTags: Set<String> {
+        switch self {
+        case let .downloaded(release, _), let .alreadyInstalled(release, _): release.sourceTags
+        }
+    }
+
+    var unavailableTags: [String] {
+        switch self {
+        case let .downloaded(_, unavailableTags), let .alreadyInstalled(_, unavailableTags): unavailableTags
         }
     }
 }
@@ -67,6 +87,7 @@ enum DSHRuntimeError: LocalizedError {
     case executableMissing
     case selectedVersionUnavailable(String)
     case portInUse(Int)
+    case startupFailed(String)
     case startupTimedOut(String)
 
     var errorDescription: String? {
@@ -83,6 +104,8 @@ enum DSHRuntimeError: LocalizedError {
             "安装完成后未找到 DSH 可执行文件。"
         case let .selectedVersionUnavailable(version):
             "所选 DSH 版本 \(version) 不可用。请选择另一个已安装版本。"
+        case let .startupFailed(reason):
+            "DSH 启动失败。\(reason)"
         case let .startupTimedOut(log):
             "DSH 启动超时。\(log)"
         case let .portInUse(port):
@@ -98,6 +121,7 @@ final class DSHRuntimeManager {
 
     private let fileManager: FileManager
     private let statusHandler: (String) -> Void
+    private let unexpectedTerminationHandler: (Int32, String?) -> Void
     private var dshProcess: Process?
     private var managedServerPID: pid_t?
     private var expectedProcessTerminations = Set<pid_t>()
@@ -117,7 +141,7 @@ final class DSHRuntimeManager {
         var installArguments: [String] {
             switch self {
             case .pnpm:
-                ["install", "--prod", "--no-frozen-lockfile"]
+                ["install", "--prod", "--no-frozen-lockfile", "--config.confirmModulesPurge=false"]
             case .npm:
                 ["install", "--omit=dev", "--no-audit", "--no-fund"]
             }
@@ -133,10 +157,12 @@ final class DSHRuntimeManager {
 
     init(
         fileManager: FileManager = .default,
-        statusHandler: @escaping (String) -> Void
+        statusHandler: @escaping (String) -> Void,
+        unexpectedTerminationHandler: @escaping (Int32, String?) -> Void = { _, _ in }
     ) {
         self.fileManager = fileManager
         self.statusHandler = statusHandler
+        self.unexpectedTerminationHandler = unexpectedTerminationHandler
     }
 
     func start(using runtime: NodeRuntime) async throws -> DSHStartupResult {
@@ -215,7 +241,8 @@ final class DSHRuntimeManager {
 
     func checkForUpdates(
         using runtime: NodeRuntime,
-        reportsProgress: Bool = true
+        reportsProgress: Bool = true,
+        updateStatusHandler: ((String) -> Void)? = nil
     ) async throws -> DSHUpdateCheckResult {
         guard let npmURL = runtime.npmURL else {
             throw DSHRuntimeError.npmUnavailable
@@ -233,12 +260,19 @@ final class DSHRuntimeManager {
         if reportsProgress {
             statusHandler("正在检查 DSH 更新…")
         }
-        let release = try await resolveLatestRelease(npmURL: npmURL, environment: environment)
+        updateStatusHandler?("正在检查更新…")
+        let resolvedRelease = try await resolveUpdateRelease(npmURL: npmURL, environment: environment)
+        let release = resolvedRelease.release
         let runtimeDirectory = versionsDirectory.appendingPathComponent(release.version, isDirectory: true)
         let executableURL = runtimeDirectory.appendingPathComponent("node_modules/.bin/dsh")
 
-        guard !fileManager.isExecutableFile(atPath: executableURL.path) else {
-            return .alreadyInstalled(release.version)
+        if fileManager.isExecutableFile(atPath: executableURL.path) {
+            do {
+                try verifyIntegrity(of: release, in: runtimeDirectory, packageManager: packageManager)
+                return .alreadyInstalled(release, unavailableTags: resolvedRelease.unavailableTags)
+            } catch {
+                try removeIncompleteInstallation(in: runtimeDirectory)
+            }
         }
 
         try fileManager.createDirectory(at: runtimeDirectory, withIntermediateDirectories: true)
@@ -246,6 +280,7 @@ final class DSHRuntimeManager {
         if reportsProgress {
             statusHandler("正在通过 \(packageManager.displayName) 下载 DSH \(release.version)…")
         }
+        updateStatusHandler?("正在下载 DSH \(release.version)…")
         try writeManifest(for: release, to: runtimeDirectory)
         let installResult = try await runToCompletion(
             executableURL: packageManager.executableURL,
@@ -253,11 +288,18 @@ final class DSHRuntimeManager {
             directoryURL: runtimeDirectory,
             environment: environment
         )
-        guard installResult.exitCode == 0 else {
-            throw DSHRuntimeError.installFailed(compact(installResult.standardError))
+        if installResult.exitCode != 0 {
+            do {
+                guard fileManager.isExecutableFile(atPath: executableURL.path) else {
+                    throw DSHRuntimeError.executableMissing
+                }
+                try verifyIntegrity(of: release, in: runtimeDirectory, packageManager: packageManager)
+            } catch {
+                throw DSHRuntimeError.installFailed(compact(installResult.standardError + installResult.standardOutput))
+            }
         }
         try verifyIntegrity(of: release, in: runtimeDirectory, packageManager: packageManager)
-        return .downloaded(release.version)
+        return .downloaded(release, unavailableTags: resolvedRelease.unavailableTags)
     }
 
     func installedVersions() -> [String] {
@@ -440,16 +482,21 @@ final class DSHRuntimeManager {
         let address = URL(string: "http://127.0.0.1:\(port)/")!
         await stopRunningProcess()
         try await stopExistingManagedServer(in: rootDirectory, port: port)
-        try startServer(
+        let serverOutput = try startServer(
             nodeURL: nodeURL,
             directoryURL: runtimeDirectory,
             port: port,
             environment: environment
         )
-        try await waitUntilHealthy(address: address)
+        try await waitUntilHealthy(address: address, output: serverOutput)
+        let webAddress = try await waitForWebAddress(
+            fallback: address,
+            port: port,
+            output: serverOutput
+        )
         try updateCurrentRuntimeLink(to: version, in: rootDirectory)
         try removeOlderRuntimeVersions(in: versionsDirectory, currentVersion: version)
-        return DSHStartupResult(address: address, version: version)
+        return DSHStartupResult(address: webAddress, version: version)
     }
 
     private func versionDirectories(in versionsDirectory: URL) -> [(version: String, url: URL)] {
@@ -487,7 +534,51 @@ final class DSHRuntimeManager {
         }
     }
 
-    private func resolveLatestRelease(
+    private func resolveUpdateRelease(
+        npmURL: URL,
+        environment: [String: String]
+    ) async throws -> (release: DSHRelease, unavailableTags: [String]) {
+        let additionalTag = AppSettings.shared.additionalUpdateTagEnabled
+            ? AppSettings.shared.updateChannel.additionalTag
+            : nil
+        let tags = ["latest", additionalTag].compactMap { $0 }
+        var releases = [DSHRelease]()
+        var unavailableTags = [String]()
+
+        for tag in tags {
+            do {
+                releases.append(try await resolveRelease(tag: tag, npmURL: npmURL, environment: environment))
+            } catch {
+                unavailableTags.append(tag)
+            }
+        }
+
+        guard let preferredRelease = releases.max(by: { lhs, rhs in
+            guard let leftVersion = SemanticVersion(string: lhs.version),
+                  let rightVersion = SemanticVersion(string: rhs.version)
+            else {
+                return lhs.version < rhs.version
+            }
+            return leftVersion < rightVersion
+        }) else {
+            throw DSHRuntimeError.metadataInvalid
+        }
+
+        let matchingTags = releases
+            .filter { $0.version == preferredRelease.version }
+            .reduce(into: Set<String>()) { $0.formUnion($1.sourceTags) }
+        return (
+            DSHRelease(
+                version: preferredRelease.version,
+                integrity: preferredRelease.integrity,
+                sourceTags: matchingTags
+            ),
+            unavailableTags
+        )
+    }
+
+    private func resolveRelease(
+        tag: String,
         npmURL: URL,
         environment: [String: String]
     ) async throws -> DSHRelease {
@@ -495,7 +586,7 @@ final class DSHRuntimeManager {
             executableURL: npmURL,
             arguments: [
                 "view",
-                "@deepseek-ai/dsh@latest",
+                "@deepseek-ai/dsh@\(tag)",
                 "version",
                 "dist.integrity",
                 "--json",
@@ -511,7 +602,7 @@ final class DSHRuntimeManager {
         else {
             throw DSHRuntimeError.metadataInvalid
         }
-        return release
+        return DSHRelease(version: release.version, integrity: release.integrity, sourceTags: [tag])
     }
 
     private func writeManifest(for release: DSHRelease, to directory: URL) throws {
@@ -574,12 +665,14 @@ final class DSHRuntimeManager {
         directoryURL: URL,
         port: Int,
         environment: [String: String]
-    ) throws {
+    ) throws -> OutputCollector {
         recentOutput = ""
 
         let process = Process()
         let outputPipe = Pipe()
         let errorPipe = Pipe()
+        let outputCollector = OutputCollector()
+        let errorCollector = OutputCollector()
         let entryPointURL = directoryURL.appendingPathComponent("node_modules/@deepseek-ai/dsh/lib/bin.js")
         process.executableURL = nodeURL
         process.arguments = [
@@ -593,23 +686,37 @@ final class DSHRuntimeManager {
         process.environment = environment
         process.standardOutput = outputPipe
         process.standardError = errorPipe
-        captureOutput(from: outputPipe)
-        captureOutput(from: errorPipe)
+        captureOutput(from: outputPipe, collector: outputCollector)
+        captureOutput(from: errorPipe, collector: errorCollector)
         process.terminationHandler = { [weak self] terminatedProcess in
+            // The last diagnostic may still be waiting in a pipe when Process
+            // invokes this callback. Drain both streams before interpreting it.
+            outputPipe.fileHandleForReading.readabilityHandler = nil
+            errorPipe.fileHandleForReading.readabilityHandler = nil
+            outputCollector.append(outputPipe.fileHandleForReading.readDataToEndOfFile())
+            errorCollector.append(errorPipe.fileHandleForReading.readDataToEndOfFile())
+            let runtimeOutput = outputCollector.string + errorCollector.string
+
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                self.recentOutput = String(runtimeOutput.suffix(2_000))
                 let wasExpected = self.expectedProcessTerminations.remove(terminatedProcess.processIdentifier) != nil
                 guard self.dshProcess === terminatedProcess else { return }
                 self.dshProcess = nil
                 self.managedServerPID = nil
                 guard !wasExpected else { return }
                 self.statusHandler("DSH 已退出（状态码 \(terminatedProcess.terminationStatus)）。")
+                self.unexpectedTerminationHandler(
+                    terminatedProcess.terminationStatus,
+                    Self.conciseRuntimeFailure(from: runtimeOutput)
+                )
             }
         }
 
         try process.run()
         dshProcess = process
         managedServerPID = process.processIdentifier
+        return outputCollector
     }
 
     private func stopRunningProcess() async {
@@ -673,11 +780,13 @@ final class DSHRuntimeManager {
         return result.standardOutput
     }
 
-    private func waitUntilHealthy(address: URL) async throws {
+    private func waitUntilHealthy(address: URL, output: OutputCollector) async throws {
         let deadline = Date().addingTimeInterval(90)
         while Date() < deadline {
             if dshProcess == nil {
-                throw DSHRuntimeError.startupTimedOut(compact(recentOutput))
+                throw DSHRuntimeError.startupFailed(
+                    Self.conciseRuntimeFailure(from: output.string) ?? "DSH 进程在完成健康检查前退出。"
+                )
             }
             if await respondsAt(address) {
                 return
@@ -685,7 +794,60 @@ final class DSHRuntimeManager {
             try await Task.sleep(nanoseconds: 500_000_000)
         }
         stop()
-        throw DSHRuntimeError.startupTimedOut(compact(recentOutput))
+        throw DSHRuntimeError.startupTimedOut(compact(output.string))
+    }
+
+    private func waitForWebAddress(
+        fallback: URL,
+        port: Int,
+        output: OutputCollector
+    ) async throws -> URL {
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline {
+            if let address = Self.authenticatedWebURL(from: output.string, port: port) {
+                return address
+            }
+            if dshProcess == nil {
+                throw DSHRuntimeError.startupFailed(
+                    Self.conciseRuntimeFailure(from: output.string) ?? "DSH 进程在完成健康检查前退出。"
+                )
+            }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        return fallback
+    }
+
+    nonisolated static func conciseRuntimeFailure(from output: String) -> String? {
+        let pattern = "failed to import loader entry ([^\\s]+) \\(([^)]+)\\): The requested module '([^']+)' does not provide an export named '([^']+)'"
+        guard let expression = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let range = NSRange(output.startIndex..., in: output)
+        guard let match = expression.firstMatch(in: output, range: range), match.numberOfRanges == 5,
+              let pluginRange = Range(match.range(at: 2), in: output),
+              let moduleRange = Range(match.range(at: 3), in: output),
+              let exportRange = Range(match.range(at: 4), in: output)
+        else {
+            return nil
+        }
+        let plugin = output[pluginRange]
+        let module = output[moduleRange]
+        let exportName = output[exportRange]
+        return "插件不兼容：\(plugin) 无法使用 \(module) 的 \(exportName) 导出。请选择兼容的已安装版本。"
+    }
+
+    nonisolated static func authenticatedWebURL(from output: String, port: Int) -> URL? {
+        let pattern = "dsh web:\\s*(http://127\\.0\\.0\\.1:\(port)[^\\s]*)"
+        guard let expression = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let range = NSRange(output.startIndex..., in: output)
+        guard let match = expression.firstMatch(in: output, range: range),
+              let urlRange = Range(match.range(at: 1), in: output),
+              let url = URL(string: String(output[urlRange])),
+              url.scheme == "http",
+              url.host == "127.0.0.1",
+              url.port == port
+        else {
+            return nil
+        }
+        return url
     }
 
     private func respondsAt(_ address: URL) async -> Bool {
@@ -742,22 +904,22 @@ final class DSHRuntimeManager {
         }
     }
 
-    private func captureOutput(from pipe: Pipe) {
-        pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+    private func captureOutput(from pipe: Pipe, collector: OutputCollector) {
+        pipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
-            guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else {
-                return
-            }
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                self.recentOutput = String((self.recentOutput + text).suffix(2_000))
-            }
+            collector.append(data)
         }
     }
 
     private func compact(_ text: String) -> String {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "" : " \(String(trimmed.suffix(800)))"
+        let lines = text.split(whereSeparator: \.isNewline)
+        guard let diagnostic = lines.last(where: {
+            $0.contains("[ERR_") || $0.localizedCaseInsensitiveContains("error")
+        }) ?? lines.last(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty })
+        else {
+            return ""
+        }
+        return " \(String(diagnostic.trimmingCharacters(in: .whitespaces).suffix(800)))"
     }
 }
 

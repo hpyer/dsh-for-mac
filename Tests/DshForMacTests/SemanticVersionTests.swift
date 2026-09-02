@@ -11,6 +11,12 @@ struct SemanticVersionTests {
         #expect(DSHUpdateCheckInterval.never.minimumInterval == nil)
     }
 
+    @Test func updateChannelsOfferCommonPrereleaseTags() {
+        #expect(DSHUpdateChannel.alpha.additionalTag == "alpha")
+        #expect(DSHUpdateChannel.beta.additionalTag == "beta")
+        #expect(DSHUpdateChannel.next.additionalTag == "next")
+    }
+
     @Test func findsCommonPnpmLocationsOutsideTheGuiPath() {
         let home = URL(fileURLWithPath: "/Users/example")
         let candidates = NodeRuntimeDetector.commonPnpmCandidates(homeDirectory: home)
@@ -29,6 +35,38 @@ struct SemanticVersionTests {
         let older = try #require(SemanticVersion(string: "22.18.0"))
         let newer = try #require(SemanticVersion(string: "22.19.0"))
         #expect(older < newer)
+    }
+
+    @Test func comparesPrereleaseVersionsUsingSemVerPrecedence() throws {
+        let beta = try #require(SemanticVersion(string: "1.2.0-beta.2"))
+        let rc = try #require(SemanticVersion(string: "1.2.0-rc.1"))
+        let stable = try #require(SemanticVersion(string: "1.2.0"))
+        let nextPrerelease = try #require(SemanticVersion(string: "1.3.0-alpha.1"))
+
+        #expect(beta < rc)
+        #expect(rc < stable)
+        #expect(stable < nextPrerelease)
+    }
+
+    @Test func summarizesIncompatiblePluginExports() {
+        let output = """
+        Error: failed to import loader entry llm-subscriptions (dsh-plugin-subscriptions): The requested module '@deepseek-ai/dsh-llm' does not provide an export named 'CallId'
+        """
+
+        #expect(
+            DSHRuntimeManager.conciseRuntimeFailure(from: output)
+                == "插件不兼容：dsh-plugin-subscriptions 无法使用 @deepseek-ai/dsh-llm 的 CallId 导出。请选择兼容的已安装版本。"
+        )
+    }
+
+    @Test func extractsAuthenticatedLocalWebURL() {
+        let output = "dsh web: http://127.0.0.1:3080/?token=one-time-token\n"
+
+        #expect(
+            DSHRuntimeManager.authenticatedWebURL(from: output, port: 3080)?.absoluteString
+                == "http://127.0.0.1:3080/?token=one-time-token"
+        )
+        #expect(DSHRuntimeManager.authenticatedWebURL(from: output, port: 3081) == nil)
     }
 
     @Test func acceptsOnlySupportedDSHNodeRanges() throws {
