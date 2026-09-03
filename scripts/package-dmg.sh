@@ -42,6 +42,11 @@ if [[ ! -f "$TRAY_IMAGE" || ! -f "$DOCK_WHALE_IMAGE" || ! -f "$INFO_PLIST" ]]; t
   exit 1
 fi
 
+if [[ ! -f "$ROOT_DIR/dsh-plugins/dsh-workspace-drop2add/package.json" ]]; then
+  print -u2 "Required workspace-drop2add plugin source is missing."
+  exit 1
+fi
+
 cd "$ROOT_DIR"
 if [[ "${DSHFORMAC_SKIP_BUILD:-0}" != "1" ]]; then
   if [[ "$PACKAGE_ARCH" == "universal" ]]; then
@@ -111,6 +116,8 @@ install -m 644 "$INFO_PLIST" "$CONTENTS_DIR/Info.plist"
 ditto "$RESOURCE_BUNDLE" "$RESOURCES_DIR/${APP_NAME}_${APP_NAME}.bundle"
 install -m 644 "$TRAY_IMAGE" "$RESOURCES_DIR/dsh-whale.png"
 install -m 644 "$DOCK_WHALE_IMAGE" "$RESOURCES_DIR/dsh-whale-dock.png"
+mkdir -p "$RESOURCES_DIR/dsh-plugins"
+ditto "$ROOT_DIR/dsh-plugins/dsh-workspace-drop2add" "$RESOURCES_DIR/dsh-plugins/dsh-workspace-drop2add"
 swift "$ROOT_DIR/scripts/render-dock-icon.swift" "$DOCK_WHALE_IMAGE" "$RESOURCES_DIR/${APP_NAME}.icns"
 
 if [[ ! -f "$RESOURCES_DIR/dsh-whale.png" || ! -f "$RESOURCES_DIR/dsh-whale-dock.png" ]]; then
