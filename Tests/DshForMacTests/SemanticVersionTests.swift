@@ -26,6 +26,24 @@ struct SemanticVersionTests {
         #expect(candidates.map(\.path).contains("/opt/homebrew/bin/pnpm"))
     }
 
+    @Test func passesDetectedPnpmToFinderLaunchedDSHProcesses() throws {
+        let version = try #require(SemanticVersion(string: "22.19.0"))
+        let runtime = NodeRuntime(
+            nodeURL: URL(fileURLWithPath: "/opt/homebrew/bin/node"),
+            npmURL: URL(fileURLWithPath: "/opt/homebrew/bin/npm"),
+            pnpmURL: URL(fileURLWithPath: "/Users/example/.local/share/pnpm/pnpm"),
+            corepackURL: URL(fileURLWithPath: "/opt/homebrew/bin/corepack"),
+            npxURL: URL(fileURLWithPath: "/opt/homebrew/bin/npx"),
+            version: version,
+            architecture: "arm64"
+        )
+
+        #expect(
+            DSHRuntimeManager.processPath(for: runtime, basePath: "/usr/bin:/bin")
+                == "/opt/homebrew/bin:/Users/example/.local/share/pnpm:/usr/bin:/bin"
+        )
+    }
+
     @Test func parsesNodeStyleVersion() throws {
         let version = try #require(SemanticVersion(string: "v22.19.0\n"))
         #expect(version == SemanticVersion(string: "22.19.0"))
