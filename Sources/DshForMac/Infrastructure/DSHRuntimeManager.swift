@@ -468,10 +468,24 @@ final class DSHRuntimeManager {
 
     private func processEnvironment(for runtime: NodeRuntime) -> [String: String] {
         var environment = ProcessInfo.processInfo.environment
-        let nodeDirectory = runtime.nodeURL.deletingLastPathComponent().path
-        environment["PATH"] = nodeDirectory + ":" + (environment["PATH"] ?? "")
+        environment["PATH"] = Self.processPath(for: runtime, basePath: environment["PATH"])
         environment["npm_config_registry"] = AppSettings.shared.registry.url
         return environment
+    }
+
+    /// Finder-launched apps do not inherit a user's shell PATH. Include the
+    /// detected pnpm location explicitly because DSH invokes pnpm by name when
+    /// it changes a profile's plugins.
+    nonisolated static func processPath(for runtime: NodeRuntime, basePath: String?) -> String {
+        let requiredDirectories = [
+            runtime.nodeURL.deletingLastPathComponent().path,
+            runtime.pnpmURL?.deletingLastPathComponent().path,
+        ].compactMap { $0 }
+        let existingDirectories = (basePath ?? "").split(separator: ":").map(String.init)
+        var seenDirectories = Set<String>()
+        return (requiredDirectories + existingDirectories)
+            .filter { seenDirectories.insert($0).inserted }
+            .joined(separator: ":")
     }
 
     private func packageManager(
