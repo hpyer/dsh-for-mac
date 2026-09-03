@@ -1,0 +1,34 @@
+{
+  "name": "dsh-workspace-drop2add",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Experimental Finder folder drop support for DSH workspaces in DshForMac.",
+  "type": "module",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/client.js",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "scripts": {
+    "check": "node ./scripts/check.mjs",
+    "test": "node ./scripts/test.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-api-workspace-controller"
+      ]
+    }
+  }
+}

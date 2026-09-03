@@ -13,3 +13,7 @@ DerivedData/
 
 # Release artifacts produced by scripts/package-dmg.sh
 dist/
+
+# Local pnpm workspace installation artifacts
+node_modules/
+.pnpm-store/

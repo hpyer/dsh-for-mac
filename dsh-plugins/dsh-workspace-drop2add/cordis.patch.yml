@@ -1,0 +1,5 @@
+# Loaded after the standard DSH Web profile. The plugin's node half is a no-op;
+# its dsh.client declaration enrolls the browser-side drop experiment.
+- insert:
+    - id: dsh-workspace-drop2add
+      name: dsh-workspace-drop2add

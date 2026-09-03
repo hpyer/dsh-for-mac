@@ -1,0 +1,9 @@
+{
+  "name": "dsh-for-mac-plugins",
+  "private": true,
+  "packageManager": "pnpm@11.22.0",
+  "scripts": {
+    "check": "pnpm --recursive run check",
+    "test": "pnpm --recursive run test"
+  }
+}
