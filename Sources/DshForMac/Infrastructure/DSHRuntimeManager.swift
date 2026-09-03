@@ -89,6 +89,8 @@ enum DSHRuntimeError: LocalizedError {
     case portInUse(Int)
     case startupFailed(String)
     case startupTimedOut(String)
+    case recommendedPluginUnavailable(String)
+    case recommendedPluginCommandFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -110,6 +112,10 @@ enum DSHRuntimeError: LocalizedError {
             "DSH 启动超时。\(log)"
         case let .portInUse(port):
             "本机端口 \(port) 已被其他服务占用。请先停止该服务，或在设置中选择其他端口。"
+        case let .recommendedPluginUnavailable(plugin):
+            "推荐插件 \(plugin) 的本地资源不可用。"
+        case let .recommendedPluginCommandFailed(detail):
+            "插件操作失败。\(detail)"
         }
     }
 }
@@ -313,6 +319,59 @@ final class DSHRuntimeManager {
         return runtimeVersionsDirectory(in: rootDirectory)
     }
 
+    func recommendedPluginStates() -> [RecommendedDSHPluginState] {
+        let enabledPackages = profileEnabledPackages()
+        return RecommendedDSHPlugin.allCases.map { plugin in
+            let isEnabled = enabledPackages.contains(plugin.packageName)
+            return RecommendedDSHPluginState(
+                plugin: plugin,
+                isEnabled: isEnabled,
+                isAvailable: plugin != .workspaceDrop2Add || isEnabled || workspaceDrop2AddSourceDirectory() != nil
+            )
+        }
+    }
+
+    func setRecommendedPlugin(
+        _ plugin: RecommendedDSHPlugin,
+        enabled: Bool,
+        using runtime: NodeRuntime,
+        dshVersion: String
+    ) async throws -> [RecommendedDSHPluginState] {
+        let rootDirectory = try applicationSupportDirectory()
+        let runtimeDirectory = runtimeVersionsDirectory(in: rootDirectory).appendingPathComponent(dshVersion, isDirectory: true)
+        let entryPoint = runtimeDirectory.appendingPathComponent("node_modules/@deepseek-ai/dsh/lib/bin.js")
+        guard fileManager.isReadableFile(atPath: entryPoint.path) else {
+            throw DSHRuntimeError.selectedVersionUnavailable(dshVersion)
+        }
+
+        let packageSpecifier: String
+        if enabled, plugin == .workspaceDrop2Add {
+            guard let sourceDirectory = workspaceDrop2AddSourceDirectory() else {
+                throw DSHRuntimeError.recommendedPluginUnavailable(plugin.title)
+            }
+            packageSpecifier = sourceDirectory.path
+        } else {
+            packageSpecifier = plugin.packageName
+        }
+
+        let result = try await runToCompletion(
+            executableURL: runtime.nodeURL,
+            arguments: [
+                entryPoint.path,
+                "plugin",
+                "--profile", "web",
+                enabled ? "add" : "remove",
+                packageSpecifier,
+            ],
+            directoryURL: runtimeDirectory,
+            environment: processEnvironment(for: runtime)
+        )
+        guard result.exitCode == 0 else {
+            throw DSHRuntimeError.recommendedPluginCommandFailed(compact(result.standardError + result.standardOutput))
+        }
+        return recommendedPluginStates()
+    }
+
     func preferredRuntimeVersion() -> String? {
         guard let rootDirectory = try? applicationSupportDirectory() else { return nil }
         return AppSettings.shared.selectedRuntimeVersion
@@ -361,6 +420,50 @@ final class DSHRuntimeManager {
         try fileManager.createDirectory(at: versionsDirectory, withIntermediateDirectories: true)
         try migrateLegacyRuntimeDirectories(from: runtimeRoot, to: versionsDirectory)
         return root
+    }
+
+    private func profileEnabledPackages() -> Set<String> {
+        guard let manifest = webProfileManifest() else { return [] }
+        let dependencies = (manifest["dependencies"] as? [String: Any]).map { Set($0.keys) } ?? []
+        let bundles = (((manifest["dsh"] as? [String: Any])?["profile"] as? [String: Any])?["bundles"] as? [String]) ?? []
+        return dependencies.union(bundles)
+    }
+
+    private func webProfileManifest() -> [String: Any]? {
+        let profileURL = dshHomeDirectory().appendingPathComponent("profiles/web/package.json")
+        guard let data = try? Data(contentsOf: profileURL) else { return nil }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
+
+    private func linkSpecifier(_ specifier: String, pointsTo directory: URL) -> Bool {
+        guard specifier.hasPrefix("link:") else { return false }
+        let linkedPath = String(specifier.dropFirst("link:".count))
+        return URL(fileURLWithPath: linkedPath)
+            .standardizedFileURL
+            .path == directory.standardizedFileURL.path
+    }
+
+    private func dshHomeDirectory() -> URL {
+        let environment = ProcessInfo.processInfo.environment
+        if let path = environment["DSH_HOME"], !path.isEmpty {
+            return URL(fileURLWithPath: path, isDirectory: true)
+        }
+        return fileManager.homeDirectoryForCurrentUser.appendingPathComponent(".dsh", isDirectory: true)
+    }
+
+    private func workspaceDrop2AddSourceDirectory() -> URL? {
+        let candidates = [
+            Bundle.main.resourceURL?.appendingPathComponent("dsh-plugins/dsh-workspace-drop2add", isDirectory: true),
+            URL(fileURLWithPath: fileManager.currentDirectoryPath, isDirectory: true)
+                .appendingPathComponent("dsh-plugins/dsh-workspace-drop2add", isDirectory: true),
+            URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appendingPathComponent("dsh-plugins/dsh-workspace-drop2add", isDirectory: true),
+        ].compactMap { $0 }
+        return candidates.first { fileManager.fileExists(atPath: $0.appendingPathComponent("package.json").path) }
     }
 
     private func processEnvironment(for runtime: NodeRuntime) -> [String: String] {
@@ -478,6 +581,12 @@ final class DSHRuntimeManager {
             throw DSHRuntimeError.selectedVersionUnavailable(version)
         }
 
+        try await migrateWorkspaceDrop2AddPluginIfNeeded(
+            runtimeDirectory: runtimeDirectory,
+            nodeURL: nodeURL,
+            environment: environment
+        )
+
         statusHandler("正在启动 DSH \(version)…")
         let address = URL(string: "http://127.0.0.1:\(port)/")!
         await stopRunningProcess()
@@ -497,6 +606,79 @@ final class DSHRuntimeManager {
         try updateCurrentRuntimeLink(to: version, in: rootDirectory)
         try removeOlderRuntimeVersions(in: versionsDirectory, currentVersion: version)
         return DSHStartupResult(address: webAddress, version: version)
+    }
+
+    /// Moves the local plugin link into the application bundle after the app is
+    /// installed or updated. The DSH profile is user-owned, so only DshForMac's
+    /// former package name and local `link:` specifiers are changed; registry
+    /// installs of the same package remain untouched.
+    private func migrateWorkspaceDrop2AddPluginIfNeeded(
+        runtimeDirectory: URL,
+        nodeURL: URL,
+        environment: [String: String]
+    ) async throws {
+        guard let sourceDirectory = workspaceDrop2AddSourceDirectory(),
+              let manifest = webProfileManifest()
+        else {
+            return
+        }
+
+        let dependencies = manifest["dependencies"] as? [String: Any] ?? [:]
+        let bundles = (((manifest["dsh"] as? [String: Any])?["profile"] as? [String: Any])?["bundles"] as? [String]) ?? []
+        let legacyPackage = "@dshformac/workspace-drop"
+        let hasLegacyPlugin = dependencies[legacyPackage] != nil || bundles.contains(legacyPackage)
+        let currentSpecifier = dependencies[RecommendedDSHPlugin.workspaceDrop2Add.packageName] as? String
+        let needsSourceMigration = currentSpecifier.map {
+            $0.hasPrefix("link:") && !linkSpecifier($0, pointsTo: sourceDirectory)
+        } ?? false
+
+        guard hasLegacyPlugin || needsSourceMigration else { return }
+
+        statusHandler("正在迁移内置拖放插件…")
+        let entryPoint = runtimeDirectory.appendingPathComponent("node_modules/@deepseek-ai/dsh/lib/bin.js")
+        if hasLegacyPlugin {
+            try await runProfilePluginCommand(
+                entryPoint: entryPoint,
+                nodeURL: nodeURL,
+                action: "remove",
+                packageSpecifier: legacyPackage,
+                directoryURL: runtimeDirectory,
+                environment: environment
+            )
+        }
+        try await runProfilePluginCommand(
+            entryPoint: entryPoint,
+            nodeURL: nodeURL,
+            action: "add",
+            packageSpecifier: sourceDirectory.path,
+            directoryURL: runtimeDirectory,
+            environment: environment
+        )
+    }
+
+    private func runProfilePluginCommand(
+        entryPoint: URL,
+        nodeURL: URL,
+        action: String,
+        packageSpecifier: String,
+        directoryURL: URL,
+        environment: [String: String]
+    ) async throws {
+        let result = try await runToCompletion(
+            executableURL: nodeURL,
+            arguments: [
+                entryPoint.path,
+                "plugin",
+                "--profile", "web",
+                action,
+                packageSpecifier,
+            ],
+            directoryURL: directoryURL,
+            environment: environment
+        )
+        guard result.exitCode == 0 else {
+            throw DSHRuntimeError.recommendedPluginCommandFailed(compact(result.standardError + result.standardOutput))
+        }
     }
 
     private func versionDirectories(in versionsDirectory: URL) -> [(version: String, url: URL)] {

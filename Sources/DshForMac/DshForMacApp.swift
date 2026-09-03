@@ -25,6 +25,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
     private var serviceStatus = "正在启动 DSH…"
     private var isServiceRunning = false
     private var updateCheckStatus = ""
+    private var recommendedPluginStatus = ""
+    private var isRecommendedPluginOperationInProgress = false
 
     private enum ToolbarIdentifier {
         static let updateAvailable = NSToolbarItem.Identifier("updateAvailable")
@@ -47,6 +49,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
         }
         contentViewController.onUpdateAvailableVersionChanged = { [weak self] version in
             self?.updateAvailableUpdateIndicator(version: version)
+        }
+        contentViewController.onRecommendedPluginOperationStatusChanged = { [weak self] status, isInProgress in
+            self?.recommendedPluginStatus = status
+            self?.isRecommendedPluginOperationInProgress = isInProgress
+            self?.refreshSettings()
         }
         mainViewController = contentViewController
         let initialContentSize = NSSize(width: 1_280, height: 720)
@@ -256,17 +263,37 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
             serviceStatus: status,
             runtimeVersion: mainViewController?.activeDSHVersion,
             installedVersions: mainViewController?.installedDSHVersions() ?? [],
-            updateCheckStatus: updateCheckStatus
+            updateCheckStatus: updateCheckStatus,
+            recommendedPlugins: mainViewController?.recommendedPluginStates() ?? [],
+            pluginStatus: recommendedPluginStatus,
+            isPluginOperationInProgress: isRecommendedPluginOperationInProgress
         )
     }
 
     private func updateUpdateCheckStatus(_ status: String) {
         updateCheckStatus = status
-        (settingsWindowController?.contentViewController as? SettingsViewController)?.update(
+        let settingsViewController = settingsWindowController?.contentViewController as? SettingsViewController
+        settingsViewController?.update(
             serviceStatus: serviceStatus,
             runtimeVersion: mainViewController?.activeDSHVersion,
             installedVersions: mainViewController?.installedDSHVersions() ?? [],
-            updateCheckStatus: status
+            updateCheckStatus: status,
+            recommendedPlugins: mainViewController?.recommendedPluginStates() ?? [],
+            pluginStatus: recommendedPluginStatus,
+            isPluginOperationInProgress: isRecommendedPluginOperationInProgress
+        )
+    }
+
+    private func refreshSettings() {
+        let settingsViewController = settingsWindowController?.contentViewController as? SettingsViewController
+        settingsViewController?.update(
+            serviceStatus: serviceStatus,
+            runtimeVersion: mainViewController?.activeDSHVersion,
+            installedVersions: mainViewController?.installedDSHVersions() ?? [],
+            updateCheckStatus: updateCheckStatus,
+            recommendedPlugins: mainViewController?.recommendedPluginStates() ?? [],
+            pluginStatus: recommendedPluginStatus,
+            isPluginOperationInProgress: isRecommendedPluginOperationInProgress
         )
     }
 
@@ -300,11 +327,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
     @objc private func showSettings() {
         if settingsWindowController == nil {
             let settingsViewController = SettingsViewController(
-                onApply: { [weak self] version, restartRequired in
-                    guard let self else { return }
-                    if restartRequired {
-                        self.confirmRestartAfterSaving(version: version)
-                    }
+                onApply: { [weak self] version, restartRequired, pluginSelections in
+                    self?.saveSettings(
+                        version: version,
+                        restartRequired: restartRequired,
+                        pluginSelections: pluginSelections
+                    )
                 },
                 onCheckUpdates: { [weak self] in
                     self?.mainViewController?.checkForUpdatesNow()
@@ -314,38 +342,64 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
                 }
             )
             let settingsWindow = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 440, height: 330),
+                contentRect: NSRect(x: 0, y: 0, width: 440, height: 470),
                 styleMask: [.titled, .closable, .miniaturizable],
                 backing: .buffered,
                 defer: false
             )
             settingsWindow.title = "DshForMac 设置"
             settingsWindow.isReleasedWhenClosed = false
-            settingsWindow.contentMinSize = NSSize(width: 440, height: 330)
+            settingsWindow.contentMinSize = NSSize(width: 440, height: 450)
             settingsWindow.contentViewController = settingsViewController
             settingsWindow.center()
             settingsWindowController = NSWindowController(window: settingsWindow)
         }
 
-        (settingsWindowController?.contentViewController as? SettingsViewController)?.update(
+        let settingsViewController = settingsWindowController?.contentViewController as? SettingsViewController
+        settingsViewController?.prepareForDisplay()
+        settingsViewController?.update(
             serviceStatus: serviceStatus,
             runtimeVersion: mainViewController?.activeDSHVersion,
             installedVersions: mainViewController?.installedDSHVersions() ?? [],
-            updateCheckStatus: updateCheckStatus
+            updateCheckStatus: updateCheckStatus,
+            recommendedPlugins: mainViewController?.recommendedPluginStates() ?? [],
+            pluginStatus: recommendedPluginStatus,
+            isPluginOperationInProgress: isRecommendedPluginOperationInProgress
         )
         settingsWindowController?.showWindow(nil)
         settingsWindowController?.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    private func confirmRestartAfterSaving(version: String?) {
+    private func saveSettings(
+        version: String?,
+        restartRequired: Bool,
+        pluginSelections: [RecommendedDSHPlugin: Bool]
+    ) {
+        let pluginChangesRequired = mainViewController?.hasRecommendedPluginSelectionChanges(pluginSelections) ?? false
+        let shouldAskToRestart = restartRequired || pluginChangesRequired
+        let shouldRestart = shouldAskToRestart && shouldRestartAfterSaving()
+
+        guard pluginChangesRequired else {
+            if shouldRestart {
+                mainViewController?.selectDSHVersion(version)
+            }
+            return
+        }
+
+        mainViewController?.applyRecommendedPluginSelections(pluginSelections) { [weak self] didChangePlugins in
+            guard let self, shouldRestart, didChangePlugins || restartRequired else { return }
+            self.mainViewController?.selectDSHVersion(version)
+        }
+    }
+
+    private func shouldRestartAfterSaving() -> Bool {
         let alert = NSAlert()
         alert.messageText = "设置已保存"
-        alert.informativeText = "运行端口或 DSH 版本已变更，是否立即重启 DSH 以应用新设置？"
+        alert.informativeText = "运行端口、DSH 版本或推荐插件已变更，是否立即重启 DSH 以应用新设置？"
         alert.addButton(withTitle: "立即重启")
         alert.addButton(withTitle: "稍后")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        mainViewController?.selectDSHVersion(version)
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     @objc private func quit() {

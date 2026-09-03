@@ -12,7 +12,7 @@ DshForMac（DeepSeek Harness for Mac）是 [DeepSeek Harness（DSH）](https://w
 DshForMac AppKit 应用
   ├─ AppDelegate：窗口、菜单栏、工具栏与应用生命周期
   ├─ MainViewController：Node 检测、DSH 启动状态、WKWebView 与产出物预览
-  ├─ SettingsViewController：端口、镜像、版本与更新频率设置
+  ├─ SettingsViewController：端口、镜像、版本、更新频率与推荐插件设置
   ├─ NodeRuntimeDetector：定位 node/npm/npx/pnpm/corepack，验证版本与架构
   ├─ DSHRuntimeManager：下载、校验、启动、健康检查、版本回收与进程停止
   └─ FilePreviewViewController：只读文本、Markdown、图片和 SVG 预览
@@ -25,6 +25,8 @@ DshForMac AppKit 应用
 ```
 
 DSH 网页中的本机文件链接，以及由用户点击产出物按钮触发的 `host.openPath` 请求，会由原生界面拦截后显示在右侧只读预览栏。不能预览的文件仍可交给默认应用打开。
+
+推荐插件中的 `dsh-workspace-drop2add` 使用混合桥接：插件加载后以一次性令牌向原生 WebView 握手；只有握手成功，原生层才会截获左侧栏内从 Finder 拖入的单个目录，并将真实绝对路径回传给插件创建 DSH 工作区。右侧和其他区域的拖放仍交给 DSH。插件未安装、已禁用或尚未握手时，原生层不会拦截任何拖放。项目自研插件均在 `dsh-plugins/` 这一 pnpm workspace 根目录下管理。
 
 ## 启动与运行时流程
 
@@ -55,12 +57,14 @@ DSH 网页中的本机文件链接，以及由用户点击产出物按钮触发�
 - 更新检查频率：每次启动、每天、每周、每月或不检查；也可手动立即检查。`latest` 始终参与检查；用户可显式启用 `alpha`、`beta` 或 `next` 中的一项作为额外预发布标签。某一标签无法解析时，另一个可用标签仍会作为候选，并在结果中提示。检查到的新版本会先下载和校验，不会替换运行中的服务。
 - 服务端口：1–65535，默认 3080。
 - 用户手动选择的 Node.js 路径。
+- 推荐插件：设置中的勾选项直接读取和修改 DSH 默认 `web` profile。`dshmarket` 如果原本就在该 profile 中，会自动显示为已启用；`dsh-workspace-drop2add` 的安装源随 DshForMac 应用包提供。启动时会将该插件的旧本地 link（含旧包名）迁移到当前应用包内的资源，但不会覆盖用户自行从 registry 安装的同名包。变更后会重启 DSH 才生效，DshForMac 不维护第二份插件启用状态。
 
 ## WebView 与预览安全
 
 - 内嵌 WebView 只允许加载配置端口的 `http://127.0.0.1` DSH 服务；其他链接或文件需要用户确认后才交给浏览器或默认应用。
 - 在加载本机 DSH 页面前，WebView 会仅为缺失的 `AbortSignal.timeout` 和 `AbortSignal.any` 注入兼容实现，以支持 macOS 13 及更早系统自带的 WebKit；系统已提供时不会覆盖原生实现。
 - 产出物桥接只接受用户触发的请求，并使用每次应用启动生成的私有令牌校验消息。
+- 文件夹工作区桥接只接受已加载 `dsh-workspace-drop2add` 插件的随机令牌，并且只接受左侧栏中的单个本地目录；它不会把路径注入普通对话附件的拖放流程。
 - 文本、Markdown、图片和 SVG 仅以只读方式预览。预览有文件大小、图片像素和文本长度限制；Markdown 与 SVG 在受限 WebView 中渲染，禁止其脚本和外部导航。
 - DSH 启动命令、端口、版本和 registry 均以结构化参数传入；应用不设置 `DSH_HOME`，不执行 `npm config set`，也不改写用户 shell 配置。
 

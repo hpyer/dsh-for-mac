@@ -5,6 +5,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     var onServiceStatusChanged: ((String, Bool) -> Void)?
     var onUpdateCheckStatusChanged: ((String) -> Void)?
     var onUpdateAvailableVersionChanged: ((String?) -> Void)?
+    var onRecommendedPluginOperationStatusChanged: ((String, Bool) -> Void)?
 
     private let titleLabel = NSTextField(labelWithString: "DeepSeek Harness for Mac")
     private let statusLabel = NSTextField(labelWithString: "正在检测 Node.js…")
@@ -15,7 +16,11 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     private let nodeWebsiteButton = NSButton(title: "打开 Node.js 官网", target: nil, action: nil)
     private let environmentStack = NSStackView()
     private let previewContainer = NSView()
+    private let webOperationOverlay = NSVisualEffectView()
+    private let webOperationLabel = NSTextField(labelWithString: "")
+    private let webOperationSpinner = NSProgressIndicator()
     private let previewBridgeToken = UUID().uuidString
+    private var workspaceDrop2AddBridgeToken: String?
     private lazy var filePreviewViewController: FilePreviewViewController = {
         let controller = FilePreviewViewController()
         controller.onClose = { [weak self] in
@@ -23,12 +28,16 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
         }
         return controller
     }()
-    private lazy var webView: WKWebView = {
+    private lazy var webView: WorkspaceDrop2AddWebView = {
         let configuration = WKWebViewConfiguration()
         let contentController = WKUserContentController()
         contentController.add(
             WeakScriptMessageHandler(owner: self),
             name: Self.producedFilePreviewHandlerName
+        )
+        contentController.add(
+            WeakScriptMessageHandler(owner: self),
+            name: Self.workspaceDrop2AddBridgeHandlerName
         )
         contentController.addUserScript(
             WKUserScript(
@@ -45,9 +54,12 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
             )
         )
         configuration.userContentController = contentController
-        let webView = WKWebView(frame: .zero, configuration: configuration)
+        let webView = WorkspaceDrop2AddWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = self
         webView.uiDelegate = self
+        webView.onWorkspaceDirectoryDropped = { [weak self] url in
+            self?.deliverWorkspaceDirectory(url)
+        }
         return webView
     }()
     private lazy var runtimeManager = DSHRuntimeManager(
@@ -86,6 +98,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
 
     private static let nodePathPreferenceKey = "preferredNodePath"
     private static let producedFilePreviewHandlerName = "dshProducedFilePreview"
+    private static let workspaceDrop2AddBridgeHandlerName = "dshWorkspaceDrop2AddBridge"
 
     override func loadView() {
         view = NSView()
@@ -180,15 +193,16 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     private func restartDeepSeekHarness(using runtime: NodeRuntime, preferredVersion: String? = nil) {
         guard !isLaunchingDeepSeekHarness else { return }
         isLaunchingDeepSeekHarness = true
+        let version = preferredVersion ?? activeDSHVersion ?? failedDSHVersion
+        let startupStatus = version.map { "正在启动 DSH \($0)…" } ?? "正在启动 DSH…"
+        showStartupProgress(
+            status: startupStatus,
+            detail: "正在重新启动本地服务，请保持窗口打开。"
+        )
         primaryButton.isEnabled = false
         redownloadButton.isEnabled = false
-        statusLabel.stringValue = "正在重启 DSH…"
-        detailLabel.stringValue = preferredVersion == nil
-            ? "将直接重启当前 DSH 版本，不检查更新。"
-            : "将启动所选 DSH 版本，不检查更新。"
         reportStartupStatus("正在重启 DSH…")
 
-        let version = preferredVersion ?? activeDSHVersion ?? failedDSHVersion
         Task { [weak self] in
             guard let self else { return }
             do {
@@ -214,6 +228,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
             previewContainer.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(webView)
             view.addSubview(previewContainer)
+            configureWebOperationOverlay()
 
             let previewView = filePreviewViewController.view
             previewView.translatesAutoresizingMaskIntoConstraints = false
@@ -243,6 +258,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     }
 
     private func showStartupError(_ error: Error) {
+        hideWebOperationStatus()
         showEnvironmentView()
         primaryButton.isEnabled = true
         redownloadButton.isEnabled = true
@@ -273,6 +289,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
 
     func stopDeepSeekHarness() {
         runtimeManager.stop()
+        hideWebOperationStatus()
         activeDSHVersion = nil
         reportServiceStatus("DSH 已停止", isRunning: false)
     }
@@ -305,6 +322,81 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
 
     func installedDSHVersions() -> [String] {
         runtimeManager.installedVersions()
+    }
+
+    func recommendedPluginStates() -> [RecommendedDSHPluginState] {
+        runtimeManager.recommendedPluginStates()
+    }
+
+    func hasRecommendedPluginSelectionChanges(_ selections: [RecommendedDSHPlugin: Bool]) -> Bool {
+        let currentSelections = Dictionary(uniqueKeysWithValues: recommendedPluginStates().map { ($0.plugin, $0.isEnabled) })
+        return RecommendedDSHPlugin.allCases.contains { plugin in
+            guard let enabled = selections[plugin] else { return false }
+            return currentSelections[plugin] != enabled
+        }
+    }
+
+    func applyRecommendedPluginSelections(
+        _ selections: [RecommendedDSHPlugin: Bool],
+        completion: @escaping (Bool) -> Void
+    ) {
+        guard !isLaunchingDeepSeekHarness else {
+            onRecommendedPluginOperationStatusChanged?("DSH 正在启动，请稍后再调整插件。", false)
+            completion(false)
+            return
+        }
+        guard case let .ready(runtime) = NodeRuntimeDetector().detect(preferredNodeURL: preferredNodeURL) else {
+            onRecommendedPluginOperationStatusChanged?("Node.js 尚未就绪，无法调整插件。", false)
+            completion(false)
+            return
+        }
+        guard let version = activeDSHVersion ?? runtimeManager.preferredRuntimeVersion() else {
+            onRecommendedPluginOperationStatusChanged?("尚未安装可用的 DSH 版本。", false)
+            completion(false)
+            return
+        }
+
+        let currentSelections = Dictionary(uniqueKeysWithValues: recommendedPluginStates().map { ($0.plugin, $0.isEnabled) })
+        let changes = RecommendedDSHPlugin.allCases.compactMap { plugin -> (RecommendedDSHPlugin, Bool)? in
+            guard let enabled = selections[plugin], currentSelections[plugin] != enabled else { return nil }
+            return (plugin, enabled)
+        }
+        guard !changes.isEmpty else {
+            completion(false)
+            return
+        }
+
+        showStartupProgress(
+            status: "正在保存推荐插件设置…",
+            detail: "正在写入 DSH profile，请保持窗口打开。"
+        )
+        onRecommendedPluginOperationStatusChanged?("正在应用推荐插件变更…", true)
+        Task { [weak self] in
+            guard let self else { return }
+            var didChangePlugins = false
+            do {
+                for (plugin, enabled) in changes {
+                    _ = try await self.runtimeManager.setRecommendedPlugin(
+                        plugin,
+                        enabled: enabled,
+                        using: runtime,
+                        dshVersion: version
+                    )
+                    didChangePlugins = true
+                }
+                self.onRecommendedPluginOperationStatusChanged?("", false)
+                completion(didChangePlugins)
+                if !self.isLaunchingDeepSeekHarness {
+                    self.restoreWebInterfaceAfterTransientOperation()
+                }
+            } catch {
+                self.onRecommendedPluginOperationStatusChanged?("推荐插件保存失败：\(error.localizedDescription)", false)
+                completion(didChangePlugins)
+                if !self.isLaunchingDeepSeekHarness {
+                    self.restoreWebInterfaceAfterTransientOperation()
+                }
+            }
+        }
     }
 
     func openRuntimeVersionsDirectory() {
@@ -387,10 +479,30 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     }
 
     private func showEnvironmentView() {
+        hideWebOperationStatus()
+        resetWorkspaceDrop2AddBridge()
         webView.stopLoading()
         webView.isHidden = true
         closeFilePreview()
         environmentStack.isHidden = false
+    }
+
+    /// Uses the same presentation for an initial launch and a subsequent
+    /// restart, rather than leaving a dimmed WebView visible underneath.
+    private func showStartupProgress(status: String, detail: String) {
+        showEnvironmentView()
+        statusLabel.stringValue = status
+        detailLabel.stringValue = detail
+        primaryButton.isHidden = true
+        redownloadButton.isHidden = true
+        chooseNodeButton.isHidden = true
+        nodeWebsiteButton.isHidden = true
+    }
+
+    private func restoreWebInterfaceAfterTransientOperation() {
+        guard webView.superview != nil else { return }
+        environmentStack.isHidden = true
+        webView.isHidden = false
     }
 
     private func showFilePreview(
@@ -410,6 +522,47 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
         previewWidthConstraint?.constant = 0
         previewContainer.isHidden = true
         view.layoutSubtreeIfNeeded()
+    }
+
+    private func configureWebOperationOverlay() {
+        guard webOperationOverlay.superview == nil else { return }
+        webOperationOverlay.material = .underWindowBackground
+        webOperationOverlay.blendingMode = .withinWindow
+        webOperationOverlay.state = .active
+        webOperationOverlay.isHidden = true
+        webOperationOverlay.translatesAutoresizingMaskIntoConstraints = false
+        webOperationSpinner.style = .spinning
+        webOperationSpinner.controlSize = .regular
+        webOperationSpinner.startAnimation(nil)
+        webOperationLabel.font = .systemFont(ofSize: 17, weight: .semibold)
+        webOperationLabel.textColor = .secondaryLabelColor
+        let content = NSStackView(views: [webOperationSpinner, webOperationLabel])
+        content.orientation = .vertical
+        content.alignment = .centerX
+        content.spacing = 12
+        content.translatesAutoresizingMaskIntoConstraints = false
+        webOperationOverlay.addSubview(content)
+        view.addSubview(webOperationOverlay)
+        NSLayoutConstraint.activate([
+            webOperationOverlay.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            webOperationOverlay.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            webOperationOverlay.topAnchor.constraint(equalTo: view.topAnchor),
+            webOperationOverlay.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            content.centerXAnchor.constraint(equalTo: webOperationOverlay.centerXAnchor),
+            content.centerYAnchor.constraint(equalTo: webOperationOverlay.centerYAnchor),
+        ])
+    }
+
+    private func showWebOperationStatus(_ status: String) {
+        configureWebOperationOverlay()
+        webOperationLabel.stringValue = status
+        webOperationSpinner.startAnimation(nil)
+        webOperationOverlay.isHidden = false
+    }
+
+    private func hideWebOperationStatus() {
+        webOperationOverlay.isHidden = true
+        webOperationSpinner.stopAnimation(nil)
     }
 
     @objc private func redownloadDeepSeekHarness() {
@@ -623,6 +776,74 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
         """
     }
 
+    /// Installs in the page's JavaScript world after the plugin handshake. It
+    /// runs on window capture before DSH's document-level attachment listener.
+    private func installWorkspaceDrop2AddPageProtection() {
+        let script = """
+        (() => {
+          if (window.__dshForMacWorkspaceDrop2AddNativeGuard?.installed) return;
+          const guard = window.__dshForMacWorkspaceDrop2AddNativeGuard = {
+            installed: true,
+            enabled: true,
+            layoutKnown: false,
+            sidebarWidth: 0
+          };
+          const scopeStyleID = 'dsh-workspace-drop2add-attachment-scope';
+          const updateAttachmentScope = (width) => {
+            let style = document.getElementById(scopeStyleID);
+            if (!style) {
+              style = document.createElement('style');
+              style.id = scopeStyleID;
+              document.head.appendChild(style);
+            }
+            const sidebarWidth = Math.max(0, Math.round(width));
+            style.textContent = `
+              :root { --dsh-workspace-drop2add-sidebar-width: ${sidebarWidth}px; }
+              div[role="status"][class$="_mask"] {
+                left: var(--dsh-workspace-drop2add-sidebar-width) !important;
+              }
+            `;
+          };
+          guard.updateAttachmentScope = updateAttachmentScope;
+          // The plugin reports its measured width immediately after this ready
+          // handshake. Scope the overlay conservatively until then.
+          updateAttachmentScope(Math.min(438, window.innerWidth * 0.4));
+          const shouldProtect = (event) => {
+            if (!guard.enabled || !Array.from(event.dataTransfer?.types ?? []).includes('Files')) return false;
+            const width = guard.layoutKnown ? guard.sidebarWidth : Math.min(438, window.innerWidth * 0.4);
+            return width >= 120
+              && event.clientX >= 0
+              && event.clientX <= width
+              && event.clientY <= window.innerHeight - 72;
+          };
+          for (const name of ['dragenter', 'dragover', 'dragleave', 'drop']) {
+            window.addEventListener(name, (event) => {
+              if (!shouldProtect(event)) return;
+              try { window.__dshForMacWorkspaceDrop2AddProtection?.onDragEvent?.(name); } catch (_) {}
+              if (name === 'dragover') event.dataTransfer.dropEffect = 'copy';
+              event.preventDefault();
+              event.stopImmediatePropagation();
+            }, true);
+          }
+        })();
+        """
+        webView.evaluateJavaScript(script)
+    }
+
+    private func updateWorkspaceDrop2AddPageProtection(width: CGFloat, enabled: Bool = true) {
+        let script = """
+        (() => {
+          const guard = window.__dshForMacWorkspaceDrop2AddNativeGuard;
+          if (!guard) return;
+          guard.enabled = \(enabled ? "true" : "false");
+          guard.layoutKnown = true;
+          guard.sidebarWidth = \(width);
+          guard.updateAttachmentScope?.(guard.sidebarWidth);
+        })();
+        """
+        webView.evaluateJavaScript(script)
+    }
+
     /// Supplies Web APIs used by recent DSH web releases but absent from the
     /// WebKit shipped with older supported macOS versions (for example, macOS 13).
     private func webKitCompatibilityScript() -> String {
@@ -698,13 +919,20 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard message.name == Self.producedFilePreviewHandlerName,
-              message.frameInfo.isMainFrame,
-              let payload = message.body as? [String: Any],
-              payload["token"] as? String == previewBridgeToken
+        guard message.frameInfo.isMainFrame,
+              let payload = message.body as? [String: Any]
         else {
             return
         }
+
+        if message.name == Self.workspaceDrop2AddBridgeHandlerName {
+            registerWorkspaceDrop2AddBridge(payload)
+            return
+        }
+
+        guard message.name == Self.producedFilePreviewHandlerName,
+              payload["token"] as? String == previewBridgeToken
+        else { return }
 
         if payload["action"] as? String == "restart" {
             restartDeepSeekHarness()
@@ -717,6 +945,55 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
             return
         }
         showFilePreview(for: URL(fileURLWithPath: path).standardizedFileURL)
+    }
+
+    private func registerWorkspaceDrop2AddBridge(_ payload: [String: Any]) {
+        guard let action = payload["action"] as? String else { return }
+        if action == "ready" {
+            guard let token = payload["token"] as? String,
+                  UUID(uuidString: token) != nil
+            else {
+                return
+            }
+            workspaceDrop2AddBridgeToken = token
+            webView.isWorkspaceDrop2AddBridgeReady = true
+            installWorkspaceDrop2AddPageProtection()
+            return
+        }
+
+        guard action == "sidebar-layout",
+              payload["token"] as? String == workspaceDrop2AddBridgeToken,
+              let width = payload["width"] as? NSNumber
+        else {
+            return
+        }
+        webView.sidebarDrop2AddWidth = min(max(0, CGFloat(width.doubleValue)), webView.bounds.width)
+        updateWorkspaceDrop2AddPageProtection(width: webView.sidebarDrop2AddWidth)
+    }
+
+    private func resetWorkspaceDrop2AddBridge() {
+        workspaceDrop2AddBridgeToken = nil
+        webView.isWorkspaceDrop2AddBridgeReady = false
+        webView.sidebarDrop2AddWidth = 0
+        updateWorkspaceDrop2AddPageProtection(width: 0, enabled: false)
+    }
+
+    private func deliverWorkspaceDirectory(_ directoryURL: URL) {
+        guard let token = workspaceDrop2AddBridgeToken else { return }
+        let payload: [String: String] = [
+            "token": token,
+            "path": directoryURL.path,
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+              let json = String(data: data, encoding: .utf8)
+        else {
+            return
+        }
+        webView.evaluateJavaScript("window.__dshForMacWorkspaceDrop2Add?.receive(\(json));") { _, error in
+            if let error {
+                NSLog("Unable to deliver Finder folder to DSH plugin: \(error.localizedDescription)")
+            }
+        }
     }
 
     private func openExternalURL(_ url: URL) {
@@ -762,6 +1039,14 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
 
         openExternalURL(url)
         decisionHandler(.cancel)
+    }
+
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation?) {
+        resetWorkspaceDrop2AddBridge()
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation?) {
+        hideWebOperationStatus()
     }
 
     func webView(

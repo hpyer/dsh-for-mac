@@ -11,15 +11,19 @@ final class SettingsViewController: NSViewController {
     private let checkUpdatesButton = NSButton(title: "立即检查", target: nil, action: nil)
     private let checkResultLabel = NSTextField(labelWithString: "")
     private let portField = NSTextField(string: "")
+    private let dshMarketCheckbox = NSButton(checkboxWithTitle: "DSH Market", target: nil, action: nil)
+    private let workspaceDrop2AddCheckbox = NSButton(checkboxWithTitle: "拖入文件夹添加工作区", target: nil, action: nil)
+    private let pluginStatusLabel = NSTextField(wrappingLabelWithString: "")
     private let applyButton = NSButton(title: "保存", target: nil, action: nil)
     private let settings: AppSettings
-    private let onApply: (String?, Bool) -> Void
+    private let onApply: (String?, Bool, [RecommendedDSHPlugin: Bool]) -> Void
     private let onCheckUpdates: () -> Void
     private let onOpenVersionsDirectory: () -> Void
+    private var pendingRecommendedPluginSelections: [RecommendedDSHPlugin: Bool]?
 
     init(
         settings: AppSettings = .shared,
-        onApply: @escaping (String?, Bool) -> Void,
+        onApply: @escaping (String?, Bool, [RecommendedDSHPlugin: Bool]) -> Void,
         onCheckUpdates: @escaping () -> Void,
         onOpenVersionsDirectory: @escaping () -> Void
     ) {
@@ -44,11 +48,19 @@ final class SettingsViewController: NSViewController {
         configureView()
     }
 
+    override func viewWillDisappear() {
+        super.viewWillDisappear()
+        pendingRecommendedPluginSelections = nil
+    }
+
     func update(
         serviceStatus: String,
         runtimeVersion: String?,
         installedVersions: [String],
-        updateCheckStatus: String
+        updateCheckStatus: String,
+        recommendedPlugins: [RecommendedDSHPluginState],
+        pluginStatus: String,
+        isPluginOperationInProgress: Bool
     ) {
         statusValue.stringValue = serviceStatus
         runtimePopup.removeAllItems()
@@ -60,12 +72,17 @@ final class SettingsViewController: NSViewController {
             runtimePopup.selectItem(at: index)
         }
         updateCheckStatusChanged(updateCheckStatus)
+        updateRecommendedPlugins(recommendedPlugins, status: pluginStatus, isOperationInProgress: isPluginOperationInProgress)
     }
 
     func updateCheckStatusChanged(_ status: String) {
         checkResultLabel.stringValue = status
         checkResultLabel.isHidden = status.isEmpty
         checkUpdatesButton.isEnabled = !status.hasPrefix("正在")
+    }
+
+    func prepareForDisplay() {
+        pendingRecommendedPluginSelections = nil
     }
 
     private func configureView() {
@@ -91,6 +108,15 @@ final class SettingsViewController: NSViewController {
         additionalTagCheckbox.state = settings.additionalUpdateTagEnabled ? .on : .off
         additionalTagCheckbox.target = self
         additionalTagCheckbox.action = #selector(additionalTagEnabledChanged)
+        dshMarketCheckbox.tag = 0
+        workspaceDrop2AddCheckbox.tag = 1
+        dshMarketCheckbox.target = self
+        workspaceDrop2AddCheckbox.target = self
+        dshMarketCheckbox.action = #selector(recommendedPluginChanged(_:))
+        workspaceDrop2AddCheckbox.action = #selector(recommendedPluginChanged(_:))
+        pluginStatusLabel.textColor = .secondaryLabelColor
+        pluginStatusLabel.maximumNumberOfLines = 3
+        pluginStatusLabel.isHidden = true
 
         applyButton.target = self
         applyButton.action = #selector(applyAndRestart)
@@ -129,6 +155,8 @@ final class SettingsViewController: NSViewController {
             makeRow(label: "预发布更新", value: additionalTagControls),
             makeRow(label: "包下载镜像", value: registryPopup),
             makeDivider(),
+            makeRow(label: "推荐插件", value: pluginControls()),
+            makeDivider(),
             applyButton,
         ])
         content.orientation = .vertical
@@ -144,6 +172,46 @@ final class SettingsViewController: NSViewController {
             content.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor, constant: -26),
             statusValue.widthAnchor.constraint(equalToConstant: 250),
         ])
+    }
+
+    private func pluginControls() -> NSStackView {
+        let details = NSTextField(wrappingLabelWithString: "勾选状态会在保存后写入 DSH 的 web profile。")
+        details.textColor = .secondaryLabelColor
+        details.maximumNumberOfLines = 2
+        details.preferredMaxLayoutWidth = 250
+        let controls = NSStackView(views: [dshMarketCheckbox, workspaceDrop2AddCheckbox, details, pluginStatusLabel])
+        controls.orientation = .vertical
+        controls.alignment = .leading
+        controls.spacing = 6
+        return controls
+    }
+
+    private func updateRecommendedPlugins(
+        _ states: [RecommendedDSHPluginState],
+        status: String,
+        isOperationInProgress: Bool
+    ) {
+        let actualSelections = Dictionary(uniqueKeysWithValues: states.map { ($0.plugin, $0.isEnabled) })
+        if pendingRecommendedPluginSelections == nil {
+            pendingRecommendedPluginSelections = actualSelections
+        }
+        let selections = pendingRecommendedPluginSelections ?? actualSelections
+        for state in states {
+            let checkbox: NSButton
+            switch state.plugin {
+            case .dshMarket: checkbox = dshMarketCheckbox
+            case .workspaceDrop2Add: checkbox = workspaceDrop2AddCheckbox
+            }
+            checkbox.state = selections[state.plugin, default: state.isEnabled] ? .on : .off
+            checkbox.isEnabled = state.isAvailable && !isOperationInProgress
+            if !state.isAvailable {
+                checkbox.toolTip = "本地插件资源不可用。"
+            } else {
+                checkbox.toolTip = state.plugin.detail
+            }
+        }
+        pluginStatusLabel.stringValue = status
+        pluginStatusLabel.isHidden = status.isEmpty
     }
 
     private func makeRow(label: String, value: NSView) -> NSStackView {
@@ -186,6 +254,10 @@ final class SettingsViewController: NSViewController {
         }
         let version = runtimePopup.titleOfSelectedItem
         let restartRequired = settings.port != port || settings.selectedRuntimeVersion != version
+        let pluginSelections = [
+            RecommendedDSHPlugin.dshMarket: dshMarketCheckbox.state == .on,
+            .workspaceDrop2Add: workspaceDrop2AddCheckbox.state == .on,
+        ]
         settings.registry = registry
         settings.selectedRuntimeVersion = version
         settings.port = port
@@ -193,7 +265,8 @@ final class SettingsViewController: NSViewController {
         settings.updateChannel = updateChannel
         settings.additionalUpdateTagEnabled = additionalTagEnabled
         view.window?.performClose(nil)
-        onApply(version, restartRequired)
+        pendingRecommendedPluginSelections = nil
+        onApply(version, restartRequired, pluginSelections)
     }
 
     @objc private func additionalTagEnabledChanged() {
@@ -209,5 +282,18 @@ final class SettingsViewController: NSViewController {
         checkResultLabel.stringValue = "正在检查更新…"
         checkResultLabel.isHidden = false
         onCheckUpdates()
+    }
+
+    @objc private func recommendedPluginChanged(_ sender: NSButton) {
+        guard let plugin = RecommendedDSHPlugin.allCases[safe: sender.tag] else { return }
+        var selections = pendingRecommendedPluginSelections ?? [:]
+        selections[plugin] = sender.state == .on
+        pendingRecommendedPluginSelections = selections
+    }
+}
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }
