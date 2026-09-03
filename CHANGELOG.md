@@ -30,6 +30,12 @@
 - 由 DshForMac 接管 dshmarket 的插件重启请求，避免与 dshmarket 自行拉起的进程发生竞争。
 - 改善 pnpm 安装后的完整性校验和错误摘要，避免可用版本被误报为安装失败。
 
+## [0.1.1]
+
+### 修复
+
+- 为 macOS 13 及更早系统的内嵌 WebView 补充 `AbortSignal.any` 和 `AbortSignal.timeout` 兼容实现，修复新版 DSH 页面无法加载的问题。
+
 ## [0.1.0] - 初始版本
 
 ### 新增
