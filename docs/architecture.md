@@ -24,7 +24,9 @@ DshForMac AppKit 应用
   └─ http://127.0.0.1:<port> → WKWebView
 ```
 
-DSH 网页中的本机文件链接，以及由用户点击产出物按钮触发的 `host.openPath` 请求，会由原生界面拦截后显示在右侧只读预览栏。不能预览的文件仍可交给默认应用打开。
+DSH 网页中的本机文件链接，以及由用户点击产出物按钮触发的 `session/openWorkspacePath` 请求（兼容旧版 `host/openPath`），会由原生界面拦截后显示在右侧只读预览栏。不能预览的文件仍可交给默认应用打开。
+
+DSH 0.1.2-rc.1 会将思考链和相对路径产物（例如 `.sql`、`.md`）按会话工作区解析，再以 Connection RPC 请求原生打开：路径位于 `payload.args.request.path`；旧版路径位于 `payload.path`。预览桥接同时解析两种结构，并在页面世界包装 DSH 的请求传输，以便覆盖对话内链接、思考链和产物链接。
 
 推荐插件中的 `dsh-workspace-drop2add` 使用混合桥接：插件加载后以一次性令牌向原生 WebView 握手；只有握手成功，原生层才会截获左侧栏内从 Finder 拖入的单个目录，并将真实绝对路径回传给插件创建 DSH 工作区。右侧和其他区域的拖放仍交给 DSH。插件未安装、已禁用或尚未握手时，原生层不会拦截任何拖放。项目自研插件均在 `dsh-plugins/` 这一 pnpm workspace 根目录下管理。
 

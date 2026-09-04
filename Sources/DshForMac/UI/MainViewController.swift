@@ -50,7 +50,8 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
             WKUserScript(
                 source: producedFilePreviewBridgeScript(),
                 injectionTime: .atDocumentStart,
-                forMainFrameOnly: true
+                forMainFrameOnly: true,
+                in: .page
             )
         )
         configuration.userContentController = contentController
@@ -712,7 +713,11 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     }
 
     private func producedFilePreviewBridgeScript() -> String {
-        """
+        let openPathRequestPaths = ProducedFilePreviewBridge.openPathRequestPaths
+            .sorted()
+            .map { "\"\($0)\"" }
+            .joined(separator: ", ")
+        return """
         (() => {
           const bridge = window.webkit?.messageHandlers?.\(Self.producedFilePreviewHandlerName);
           if (!bridge || window.__dshForMacProducedFilePreviewInstalled) return;
@@ -720,15 +725,32 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
 
           var pendingClick = null;
           const originalFetch = window.fetch.bind(window);
+          const wrappedTransports = new WeakSet();
           document.addEventListener('click', (event) => {
             if (!event.isTrusted) return;
             const target = event.target instanceof Element
               ? event.target.closest('[data-produced-files-row] button[title], [data-tool] button[class*="fileLink"], button[title][aria-label*="打开"], button[title][aria-label*="Open"]')
               : null;
-            if (target) pendingClick = { expiresAt: Date.now() + 1_500 };
+            if (!target) return;
+
+            // DSH 0.1.2-rc.1 exposes an absolute file path in the title of
+            // both produced-file chips and clickable mentions in a response.
+            // Intercept them before React dispatches its handler, which would
+            // otherwise invoke the system opener.
+            const path = target.getAttribute('title');
+            if (typeof path === 'string' && path.startsWith('/')) {
+              event.preventDefault();
+              event.stopImmediatePropagation();
+              bridge.postMessage({ path, token: '\(previewBridgeToken)' });
+              return;
+            }
+
+            // Links with a relative path are resolved by DSH before its RPC,
+            // so retain the request-level interception as a fallback.
+            pendingClick = { expiresAt: Date.now() + 1_500 };
           }, true);
 
-          window.fetch = function(input, init) {
+          const interceptOpenPathRequest = function(delegate, input, init) {
             const requestURL = input instanceof Request ? input.url : String(input);
             const request = new URL(requestURL, window.location.href);
             const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
@@ -743,9 +765,14 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
               }));
             }
 
-            const isOpenPathRequest = new URL(requestURL, window.location.href).pathname.endsWith('/api/host.openPath');
+            // DSH 0.1.2-rc.1 moved this capability from the host namespace to
+            // the session namespace. Keep both Connection RPC routes so
+            // previewing works with installed DSH versions on either side.
+            const openPathRequestPaths = new Set([\(openPathRequestPaths)]);
+            const rpcPath = new URL(requestURL, window.location.href).pathname;
+            const isOpenPathRequest = openPathRequestPaths.has(rpcPath);
             if (!pendingClick || pendingClick.expiresAt < Date.now() || !isOpenPathRequest) {
-              return originalFetch(input, init);
+              return delegate(input, init);
             }
 
             return Promise.resolve().then(async () => {
@@ -755,9 +782,11 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
                   ? await input.clone().text()
                   : '';
               const request = JSON.parse(body);
-              const path = request?.payload?.path;
+              // Newer DSH Connection RPCs nest arguments under
+              // payload.args, while the previous host route used payload.
+              const path = request?.payload?.args?.request?.path ?? request?.payload?.path;
               if (request?.type !== 'client-request' || typeof request?.rpcId !== 'string' || typeof path !== 'string' || path.length === 0) {
-                return originalFetch(input, init);
+                return delegate(input, init);
               }
 
               pendingClick = null;
@@ -770,8 +799,27 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
                 status: 200,
                 headers: { 'content-type': 'application/json' }
               });
-            }).catch(() => originalFetch(input, init));
+            }).catch(() => delegate(input, init));
           };
+
+          window.fetch = function(input, init) {
+            return interceptOpenPathRequest(originalFetch, input, init);
+          };
+
+          // The current Web frontend may supply its own fetch implementation
+          // through this boot-time transport. Wrap it as well: tool-call rows
+          // and relative-path deliverables use that route to resolve the
+          // session workspace before asking the host to open the file.
+          const wrapTransportFetch = () => {
+            const transport = window.__DSH_TRANSPORT__;
+            if (!transport || typeof transport.fetch !== 'function' || wrappedTransports.has(transport)) return;
+            const delegate = transport.fetch.bind(transport);
+            transport.fetch = (input, init) => interceptOpenPathRequest(delegate, input, init);
+            wrappedTransports.add(transport);
+          };
+          wrapTransportFetch();
+          const transportWatcher = window.setInterval(wrapTransportFetch, 50);
+          window.setTimeout(() => window.clearInterval(transportWatcher), 10_000);
         })();
         """
     }

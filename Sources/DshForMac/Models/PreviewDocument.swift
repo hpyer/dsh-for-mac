@@ -1,5 +1,18 @@
 import Foundation
 
+enum ProducedFilePreviewBridge {
+    /// Connection RPC endpoints used by supported DSH versions to open a file.
+    /// The namespace moved from `host` to `session` in DSH 0.1.2-rc.1.
+    static let openPathRequestPaths: Set<String> = [
+        "/api/host/openPath",
+        "/api/session/openWorkspacePath",
+    ]
+
+    static func interceptsOpenPathRequest(at url: URL) -> Bool {
+        openPathRequestPaths.contains(url.path)
+    }
+}
+
 enum PreviewContentKind: Equatable {
     case image
     case svg
