@@ -40,5 +40,6 @@
 
 ## 提交规则
 
+- `CHANGELOG.md` 仅在发布新版本时修改；日常功能开发、修复和普通提交不得修改。
 - 创建提交前先检查变更范围并只暂存相关文件。
 - 提交信息遵循 Conventional Commits：type(scope): summary。
