@@ -742,7 +742,7 @@ final class DSHRuntimeManager {
     private func removeOlderRuntimeVersions(in versionsDirectory: URL, currentVersion: String) throws {
         let protectedVersions = Set([currentVersion, settings.selectedRuntimeVersion].compactMap { $0 })
         let versions = versionDirectories(in: versionsDirectory)
-        var retainedVersions = Set(versions.prefix(3).map(\.version))
+        var retainedVersions = Set(versions.prefix(5).map(\.version))
         retainedVersions.formUnion(protectedVersions)
         for version in versions where !retainedVersions.contains(version.version) {
             try fileManager.removeItem(at: version.url)
