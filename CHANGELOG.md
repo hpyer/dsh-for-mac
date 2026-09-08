@@ -2,7 +2,15 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 的记录方式。
 
-## [Unreleased]
+## [0.3.3] - 2026-09-08
+
+### 新增
+
+- 设置顶部显示 DshForMac 版本号，并在 DSH Market 右侧提供 GitHub 仓库链接。
+
+### 调整
+
+- 受管 DSH 版本默认保留数量从 3 个增加至 5 个，稳定版与预发布版合并计数；当前运行或用户固定的版本不在其中时额外保留。
 
 ### 修复
 
