@@ -82,6 +82,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        mainViewController?.checkScheduledUpdates()
         guard !flag, let window = windowController?.window else { return true }
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -89,6 +90,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        mainViewController?.stopUpdateChecks()
         mainViewController?.stopDeepSeekHarness()
     }
 
@@ -264,6 +266,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
             runtimeVersion: mainViewController?.activeDSHVersion,
             installedVersions: mainViewController?.installedDSHVersions() ?? [],
             updateCheckStatus: updateCheckStatus,
+            canDownloadUpdate: mainViewController?.canDownloadUpdate ?? false,
+            isUpdateOperationInProgress: mainViewController?.isUpdateOperationInProgress ?? false,
             recommendedPlugins: mainViewController?.recommendedPluginStates() ?? [],
             pluginStatus: recommendedPluginStatus,
             isPluginOperationInProgress: isRecommendedPluginOperationInProgress
@@ -278,6 +282,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
             runtimeVersion: mainViewController?.activeDSHVersion,
             installedVersions: mainViewController?.installedDSHVersions() ?? [],
             updateCheckStatus: status,
+            canDownloadUpdate: mainViewController?.canDownloadUpdate ?? false,
+            isUpdateOperationInProgress: mainViewController?.isUpdateOperationInProgress ?? false,
             recommendedPlugins: mainViewController?.recommendedPluginStates() ?? [],
             pluginStatus: recommendedPluginStatus,
             isPluginOperationInProgress: isRecommendedPluginOperationInProgress
@@ -291,6 +297,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
             runtimeVersion: mainViewController?.activeDSHVersion,
             installedVersions: mainViewController?.installedDSHVersions() ?? [],
             updateCheckStatus: updateCheckStatus,
+            canDownloadUpdate: mainViewController?.canDownloadUpdate ?? false,
+            isUpdateOperationInProgress: mainViewController?.isUpdateOperationInProgress ?? false,
             recommendedPlugins: mainViewController?.recommendedPluginStates() ?? [],
             pluginStatus: recommendedPluginStatus,
             isPluginOperationInProgress: isRecommendedPluginOperationInProgress
@@ -298,7 +306,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
     }
 
     private func updateAvailableUpdateIndicator(version: String?) {
-        updateAvailableIndicator.toolTip = version.map { "已下载新版本 \($0)，点击查看设置" }
+        updateAvailableIndicator.toolTip = version.map { "发现新版本 \($0)，点击查看设置" }
         guard let mainToolbar else { return }
 
         if version != nil {
@@ -337,12 +345,15 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
                 onCheckUpdates: { [weak self] in
                     self?.mainViewController?.checkForUpdatesNow()
                 },
+                onDownloadUpdate: { [weak self] in
+                    self?.mainViewController?.downloadAvailableUpdate()
+                },
                 onOpenVersionsDirectory: { [weak self] in
                     self?.mainViewController?.openRuntimeVersionsDirectory()
                 }
             )
             let settingsWindow = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 440, height: 470),
+                contentRect: NSRect(x: 0, y: 0, width: 440, height: 510),
                 styleMask: [.titled, .closable, .miniaturizable],
                 backing: .buffered,
                 defer: false
@@ -362,6 +373,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
             runtimeVersion: mainViewController?.activeDSHVersion,
             installedVersions: mainViewController?.installedDSHVersions() ?? [],
             updateCheckStatus: updateCheckStatus,
+            canDownloadUpdate: mainViewController?.canDownloadUpdate ?? false,
+            isUpdateOperationInProgress: mainViewController?.isUpdateOperationInProgress ?? false,
             recommendedPlugins: mainViewController?.recommendedPluginStates() ?? [],
             pluginStatus: recommendedPluginStatus,
             isPluginOperationInProgress: isRecommendedPluginOperationInProgress
@@ -376,6 +389,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
         restartRequired: Bool,
         pluginSelections: [RecommendedDSHPlugin: Bool]
     ) {
+        mainViewController?.checkScheduledUpdates()
         let pluginChangesRequired = mainViewController?.hasRecommendedPluginSelectionChanges(pluginSelections) ?? false
         let shouldAskToRestart = restartRequired || pluginChangesRequired
         let shouldRestart = shouldAskToRestart && shouldRestartAfterSaving()

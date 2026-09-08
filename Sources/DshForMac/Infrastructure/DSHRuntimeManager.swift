@@ -39,27 +39,12 @@ struct DSHStartupResult: Sendable {
     let version: String
 }
 
-enum DSHUpdateCheckResult: Sendable {
-    case downloaded(DSHRelease, unavailableTags: [String])
-    case alreadyInstalled(DSHRelease, unavailableTags: [String])
+struct DSHUpdateCheckResult: Sendable {
+    let release: DSHRelease
+    let isInstalled: Bool
+    let unavailableTags: [String]
 
-    var version: String {
-        switch self {
-        case let .downloaded(release, _), let .alreadyInstalled(release, _): release.version
-        }
-    }
-
-    var sourceTags: Set<String> {
-        switch self {
-        case let .downloaded(release, _), let .alreadyInstalled(release, _): release.sourceTags
-        }
-    }
-
-    var unavailableTags: [String] {
-        switch self {
-        case let .downloaded(_, unavailableTags), let .alreadyInstalled(_, unavailableTags): unavailableTags
-        }
-    }
+    var version: String { release.version }
 }
 
 private struct DynamicCodingKey: CodingKey {
@@ -125,6 +110,8 @@ final class DSHRuntimeManager {
     static let defaultRegistry = PackageRegistry.tencent.url
     static let defaultPort = 30_80
 
+    private let settings: AppSettings
+    private let supportDirectory: URL?
     private let fileManager: FileManager
     private let statusHandler: (String) -> Void
     private let unexpectedTerminationHandler: (Int32, String?) -> Void
@@ -163,10 +150,14 @@ final class DSHRuntimeManager {
 
     init(
         fileManager: FileManager = .default,
+        settings: AppSettings = .shared,
+        supportDirectory: URL? = nil,
         statusHandler: @escaping (String) -> Void,
         unexpectedTerminationHandler: @escaping (Int32, String?) -> Void = { _, _ in }
     ) {
         self.fileManager = fileManager
+        self.settings = settings
+        self.supportDirectory = supportDirectory
         self.statusHandler = statusHandler
         self.unexpectedTerminationHandler = unexpectedTerminationHandler
     }
@@ -175,9 +166,9 @@ final class DSHRuntimeManager {
         let rootDirectory = try applicationSupportDirectory()
         let versionsDirectory = runtimeVersionsDirectory(in: rootDirectory)
         let environment = processEnvironment(for: runtime)
-        let port = AppSettings.shared.port
+        let port = settings.port
 
-        if let selectedVersion = AppSettings.shared.selectedRuntimeVersion {
+        if let selectedVersion = settings.selectedRuntimeVersion {
             return try await startInstalledRuntime(
                 version: selectedVersion,
                 in: versionsDirectory,
@@ -200,6 +191,7 @@ final class DSHRuntimeManager {
         }
 
         let update = try await checkForUpdates(using: runtime)
+        try await downloadRelease(update.release, using: runtime)
         return try await startInstalledRuntime(
             version: update.version,
             in: versionsDirectory,
@@ -215,7 +207,7 @@ final class DSHRuntimeManager {
         let versionsDirectory = runtimeVersionsDirectory(in: rootDirectory)
         let environment = processEnvironment(for: runtime)
         let version = preferredVersion
-            ?? AppSettings.shared.selectedRuntimeVersion
+            ?? settings.selectedRuntimeVersion
             ?? currentRuntimeVersion(in: rootDirectory)
 
         guard let version else {
@@ -227,20 +219,21 @@ final class DSHRuntimeManager {
             in: versionsDirectory,
             rootDirectory: rootDirectory,
             nodeURL: runtime.nodeURL,
-            port: AppSettings.shared.port,
+            port: settings.port,
             environment: environment
         )
     }
 
     func downloadLatestAndStart(using runtime: NodeRuntime) async throws -> DSHStartupResult {
         let update = try await checkForUpdates(using: runtime)
+        try await downloadRelease(update.release, using: runtime)
         let rootDirectory = try applicationSupportDirectory()
         return try await startInstalledRuntime(
             version: update.version,
             in: runtimeVersionsDirectory(in: rootDirectory),
             rootDirectory: rootDirectory,
             nodeURL: runtime.nodeURL,
-            port: AppSettings.shared.port,
+            port: settings.port,
             environment: processEnvironment(for: runtime)
         )
     }
@@ -257,12 +250,6 @@ final class DSHRuntimeManager {
         let rootDirectory = try applicationSupportDirectory()
         let versionsDirectory = runtimeVersionsDirectory(in: rootDirectory)
         let environment = processEnvironment(for: runtime)
-        let packageManager = await packageManager(
-            for: runtime,
-            npmURL: npmURL,
-            environment: environment,
-            reportsProgress: reportsProgress
-        )
         if reportsProgress {
             statusHandler("正在检查 DSH 更新…")
         }
@@ -270,23 +257,56 @@ final class DSHRuntimeManager {
         let resolvedRelease = try await resolveUpdateRelease(npmURL: npmURL, environment: environment)
         let release = resolvedRelease.release
         let runtimeDirectory = versionsDirectory.appendingPathComponent(release.version, isDirectory: true)
-        let executableURL = runtimeDirectory.appendingPathComponent("node_modules/.bin/dsh")
+        return DSHUpdateCheckResult(
+            release: release,
+            isInstalled: isReleaseInstalled(release, in: runtimeDirectory),
+            unavailableTags: resolvedRelease.unavailableTags
+        )
+    }
 
-        if fileManager.isExecutableFile(atPath: executableURL.path) {
-            do {
-                try verifyIntegrity(of: release, in: runtimeDirectory, packageManager: packageManager)
-                return .alreadyInstalled(release, unavailableTags: resolvedRelease.unavailableTags)
-            } catch {
-                try removeIncompleteInstallation(in: runtimeDirectory)
-            }
+    /// Resolves the exact version the user chose, even if registry tags have moved.
+    func downloadVersion(_ version: String, using runtime: NodeRuntime) async throws {
+        guard let npmURL = runtime.npmURL else { throw DSHRuntimeError.npmUnavailable }
+        let release = try await resolveRelease(
+            tag: version, npmURL: npmURL, environment: processEnvironment(for: runtime)
+        )
+        guard release.version == version else { throw DSHRuntimeError.metadataInvalid }
+        try await downloadRelease(release, using: runtime, reportsProgress: false)
+    }
+
+    private func isReleaseInstalled(_ release: DSHRelease, in directory: URL) -> Bool {
+        guard fileManager.isExecutableFile(atPath: directory.appendingPathComponent("node_modules/.bin/dsh").path)
+        else { return false }
+        return (try? verifyNpmIntegrity(of: release, in: directory)) != nil
+            || (try? verifyPnpmIntegrity(of: release, in: directory)) != nil
+    }
+
+    private func downloadRelease(
+        _ release: DSHRelease,
+        using runtime: NodeRuntime,
+        reportsProgress: Bool = true
+    ) async throws {
+        guard let npmURL = runtime.npmURL else { throw DSHRuntimeError.npmUnavailable }
+        let rootDirectory = try applicationSupportDirectory()
+        let runtimeDirectory = runtimeVersionsDirectory(in: rootDirectory)
+            .appendingPathComponent(release.version, isDirectory: true)
+        if isReleaseInstalled(release, in: runtimeDirectory) { return }
+        // Never repair an installation while its server is running.
+        if dshProcess?.isRunning == true,
+           dshProcess?.currentDirectoryURL?.standardizedFileURL == runtimeDirectory.standardizedFileURL {
+            throw DSHRuntimeError.integrityMismatch
         }
+        let environment = processEnvironment(for: runtime)
+        let packageManager = await packageManager(
+            for: runtime, npmURL: npmURL, environment: environment, reportsProgress: reportsProgress
+        )
+        let executableURL = runtimeDirectory.appendingPathComponent("node_modules/.bin/dsh")
 
         try fileManager.createDirectory(at: runtimeDirectory, withIntermediateDirectories: true)
         try removeIncompleteInstallation(in: runtimeDirectory)
         if reportsProgress {
             statusHandler("正在通过 \(packageManager.displayName) 下载 DSH \(release.version)…")
         }
-        updateStatusHandler?("正在下载 DSH \(release.version)…")
         try writeManifest(for: release, to: runtimeDirectory)
         let installResult = try await runToCompletion(
             executableURL: packageManager.executableURL,
@@ -305,7 +325,6 @@ final class DSHRuntimeManager {
             }
         }
         try verifyIntegrity(of: release, in: runtimeDirectory, packageManager: packageManager)
-        return .downloaded(release, unavailableTags: resolvedRelease.unavailableTags)
     }
 
     func installedVersions() -> [String] {
@@ -374,7 +393,7 @@ final class DSHRuntimeManager {
 
     func preferredRuntimeVersion() -> String? {
         guard let rootDirectory = try? applicationSupportDirectory() else { return nil }
-        return AppSettings.shared.selectedRuntimeVersion
+        return settings.selectedRuntimeVersion
             ?? currentRuntimeVersion(in: rootDirectory)
             ?? versionDirectories(in: runtimeVersionsDirectory(in: rootDirectory)).first?.version
     }
@@ -389,8 +408,8 @@ final class DSHRuntimeManager {
             let currentLink = rootDirectory.appendingPathComponent("runtimes/current")
             try? fileManager.removeItem(at: currentLink)
         }
-        if AppSettings.shared.selectedRuntimeVersion == version {
-            AppSettings.shared.selectedRuntimeVersion = nil
+        if settings.selectedRuntimeVersion == version {
+            settings.selectedRuntimeVersion = nil
         }
     }
 
@@ -407,7 +426,7 @@ final class DSHRuntimeManager {
     }
 
     private func applicationSupportDirectory() throws -> URL {
-        let base = try fileManager.url(
+        let base = try supportDirectory ?? fileManager.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,
             appropriateFor: nil,
@@ -469,7 +488,7 @@ final class DSHRuntimeManager {
     private func processEnvironment(for runtime: NodeRuntime) -> [String: String] {
         var environment = ProcessInfo.processInfo.environment
         environment["PATH"] = Self.processPath(for: runtime, basePath: environment["PATH"])
-        environment["npm_config_registry"] = AppSettings.shared.registry.url
+        environment["npm_config_registry"] = settings.registry.url
         return environment
     }
 
@@ -721,7 +740,7 @@ final class DSHRuntimeManager {
     }
 
     private func removeOlderRuntimeVersions(in versionsDirectory: URL, currentVersion: String) throws {
-        let protectedVersions = Set([currentVersion, AppSettings.shared.selectedRuntimeVersion].compactMap { $0 })
+        let protectedVersions = Set([currentVersion, settings.selectedRuntimeVersion].compactMap { $0 })
         let versions = versionDirectories(in: versionsDirectory)
         var retainedVersions = Set(versions.prefix(3).map(\.version))
         retainedVersions.formUnion(protectedVersions)
@@ -734,8 +753,8 @@ final class DSHRuntimeManager {
         npmURL: URL,
         environment: [String: String]
     ) async throws -> (release: DSHRelease, unavailableTags: [String]) {
-        let additionalTag = AppSettings.shared.additionalUpdateTagEnabled
-            ? AppSettings.shared.updateChannel.additionalTag
+        let additionalTag = settings.additionalUpdateTagEnabled
+            ? settings.updateChannel.additionalTag
             : nil
         let tags = ["latest", additionalTag].compactMap { $0 }
         var releases = [DSHRelease]()

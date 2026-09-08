@@ -86,6 +86,7 @@ final class AppSettings {
         static let updateChannel = "dshUpdateChannel"
         static let lastUpdateCheckDate = "dshLastUpdateCheckDate"
         static let availableUpdateVersion = "dshAvailableUpdateVersion"
+        static let availableUpdateIsDownloaded = "dshAvailableUpdateIsDownloaded"
     }
 
     private let defaults: UserDefaults
@@ -184,6 +185,7 @@ final class AppSettings {
     var availableUpdateVersion: String? {
         get { defaults.string(forKey: Key.availableUpdateVersion) }
         set {
+            if availableUpdateVersion != newValue { availableUpdateIsDownloaded = false }
             if let newValue {
                 defaults.set(newValue, forKey: Key.availableUpdateVersion)
             } else {
@@ -192,8 +194,19 @@ final class AppSettings {
         }
     }
 
-    func shouldCheckForUpdates(now: Date = Date()) -> Bool {
+    var availableUpdateIsDownloaded: Bool {
+        get { defaults.bool(forKey: Key.availableUpdateIsDownloaded) }
+        set { defaults.set(newValue, forKey: Key.availableUpdateIsDownloaded) }
+    }
+
+    func shouldCheckForUpdates(
+        now: Date = Date(), isApplicationLaunch: Bool = true, lastAttemptDate: Date? = nil
+    ) -> Bool {
+        if updateCheckInterval == .everyLaunch { return isApplicationLaunch }
         guard let minimumInterval = updateCheckInterval.minimumInterval else { return false }
+        if !isApplicationLaunch, let lastAttemptDate, now.timeIntervalSince(lastAttemptDate) < 15 * 60 {
+            return false
+        }
         guard let lastUpdateCheckDate else { return true }
         return now.timeIntervalSince(lastUpdateCheckDate) >= minimumInterval
     }

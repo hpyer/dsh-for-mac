@@ -9,7 +9,8 @@ final class SettingsViewController: NSViewController {
     private let updateChannelPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let additionalTagCheckbox = NSButton(checkboxWithTitle: "启用额外标签", target: nil, action: nil)
     private let checkUpdatesButton = NSButton(title: "立即检查", target: nil, action: nil)
-    private let checkResultLabel = NSTextField(labelWithString: "")
+    private let checkResultLabel = NSTextField(wrappingLabelWithString: "")
+    private let downloadUpdateButton = NSButton(title: "下载", target: nil, action: nil)
     private let portField = NSTextField(string: "")
     private let dshMarketCheckbox = NSButton(checkboxWithTitle: "DSH Market", target: nil, action: nil)
     private let workspaceDrop2AddCheckbox = NSButton(checkboxWithTitle: "拖入文件夹添加工作区", target: nil, action: nil)
@@ -18,6 +19,7 @@ final class SettingsViewController: NSViewController {
     private let settings: AppSettings
     private let onApply: (String?, Bool, [RecommendedDSHPlugin: Bool]) -> Void
     private let onCheckUpdates: () -> Void
+    private let onDownloadUpdate: () -> Void
     private let onOpenVersionsDirectory: () -> Void
     private var pendingRecommendedPluginSelections: [RecommendedDSHPlugin: Bool]?
 
@@ -25,11 +27,13 @@ final class SettingsViewController: NSViewController {
         settings: AppSettings = .shared,
         onApply: @escaping (String?, Bool, [RecommendedDSHPlugin: Bool]) -> Void,
         onCheckUpdates: @escaping () -> Void,
+        onDownloadUpdate: @escaping () -> Void,
         onOpenVersionsDirectory: @escaping () -> Void
     ) {
         self.settings = settings
         self.onApply = onApply
         self.onCheckUpdates = onCheckUpdates
+        self.onDownloadUpdate = onDownloadUpdate
         self.onOpenVersionsDirectory = onOpenVersionsDirectory
         super.init(nibName: nil, bundle: nil)
     }
@@ -58,6 +62,8 @@ final class SettingsViewController: NSViewController {
         runtimeVersion: String?,
         installedVersions: [String],
         updateCheckStatus: String,
+        canDownloadUpdate: Bool,
+        isUpdateOperationInProgress: Bool,
         recommendedPlugins: [RecommendedDSHPluginState],
         pluginStatus: String,
         isPluginOperationInProgress: Bool
@@ -71,14 +77,18 @@ final class SettingsViewController: NSViewController {
         {
             runtimePopup.selectItem(at: index)
         }
-        updateCheckStatusChanged(updateCheckStatus)
-        updateRecommendedPlugins(recommendedPlugins, status: pluginStatus, isOperationInProgress: isPluginOperationInProgress)
-    }
-
-    func updateCheckStatusChanged(_ status: String) {
+        var status = updateCheckStatus
+        if status.isEmpty, let version = settings.availableUpdateVersion {
+            status = settings.availableUpdateIsDownloaded && installedVersions.contains(version)
+                ? "新版本 \(version) 已下载。" : "发现新版本 \(version)，是否下载？"
+        }
         checkResultLabel.stringValue = status
+        checkResultLabel.toolTip = status
         checkResultLabel.isHidden = status.isEmpty
-        checkUpdatesButton.isEnabled = !status.hasPrefix("正在")
+        checkUpdatesButton.isEnabled = !isUpdateOperationInProgress
+        downloadUpdateButton.isHidden = !canDownloadUpdate
+        downloadUpdateButton.isEnabled = canDownloadUpdate
+        updateRecommendedPlugins(recommendedPlugins, status: pluginStatus, isOperationInProgress: isPluginOperationInProgress)
     }
 
     func prepareForDisplay() {
@@ -125,10 +135,16 @@ final class SettingsViewController: NSViewController {
         openVersionsButton.action = #selector(openVersionsDirectory)
         checkUpdatesButton.target = self
         checkUpdatesButton.action = #selector(checkUpdates)
+        downloadUpdateButton.target = self
+        downloadUpdateButton.action = #selector(downloadUpdate)
+        downloadUpdateButton.isBordered = false
+        downloadUpdateButton.contentTintColor = .linkColor
+        downloadUpdateButton.setContentHuggingPriority(.required, for: .horizontal)
+        downloadUpdateButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        downloadUpdateButton.isHidden = true
         checkResultLabel.textColor = .secondaryLabelColor
-        checkResultLabel.lineBreakMode = .byTruncatingTail
-        checkResultLabel.maximumNumberOfLines = 1
-        checkResultLabel.widthAnchor.constraint(equalToConstant: 240).isActive = true
+        checkResultLabel.maximumNumberOfLines = 3
+        checkResultLabel.preferredMaxLayoutWidth = 205
         checkResultLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
         checkResultLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         checkResultLabel.isHidden = true
@@ -138,7 +154,12 @@ final class SettingsViewController: NSViewController {
         let updateActionControls = NSStackView(views: [updateIntervalPopup, checkUpdatesButton])
         updateActionControls.orientation = .horizontal
         updateActionControls.spacing = 8
-        let updateControls = NSStackView(views: [updateActionControls, checkResultLabel])
+        let downloadControls = NSStackView(views: [checkResultLabel, downloadUpdateButton])
+        downloadControls.orientation = .horizontal
+        downloadControls.alignment = .firstBaseline
+        downloadControls.spacing = 8
+        downloadControls.widthAnchor.constraint(equalToConstant: 250).isActive = true
+        let updateControls = NSStackView(views: [updateActionControls, downloadControls])
         updateControls.orientation = .vertical
         updateControls.alignment = .leading
         updateControls.spacing = 8
@@ -278,10 +299,11 @@ final class SettingsViewController: NSViewController {
     }
 
     @objc private func checkUpdates() {
-        checkUpdatesButton.isEnabled = false
-        checkResultLabel.stringValue = "正在检查更新…"
-        checkResultLabel.isHidden = false
         onCheckUpdates()
+    }
+
+    @objc private func downloadUpdate() {
+        onDownloadUpdate()
     }
 
     @objc private func recommendedPluginChanged(_ sender: NSButton) {

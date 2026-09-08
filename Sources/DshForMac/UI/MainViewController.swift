@@ -82,6 +82,16 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     private var didCompleteInitialStartup = false
     private var failedDSHVersion: String?
     private var isCheckingForUpdates = false
+    private var isDownloadingUpdate = false
+    private var updateCheckTimer: Timer?
+    private var didCheckUpdatesAtLaunch = false
+    private var lastUpdateCheckAttempt: Date?
+    var isUpdateOperationInProgress: Bool { isCheckingForUpdates || isDownloadingUpdate }
+    var canDownloadUpdate: Bool {
+        guard !isUpdateOperationInProgress, !isLaunchingDeepSeekHarness,
+              let version = AppSettings.shared.availableUpdateVersion else { return false }
+        return !AppSettings.shared.availableUpdateIsDownloaded || !installedDSHVersions().contains(version)
+    }
     private var previewWidthConstraint: NSLayoutConstraint?
     private var pendingPreviewResponseURLs = Set<URL>()
     private(set) var activeDSHVersion: String?
@@ -110,6 +120,18 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     override func viewDidLoad() {
         super.viewDidLoad()
         configureView()
+        let timer = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.checkScheduledUpdates() }
+        }
+        timer.tolerance = 5
+        RunLoop.main.add(timer, forMode: .common)
+        updateCheckTimer = timer
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(checkScheduledUpdates), name: NSApplication.didBecomeActiveNotification, object: nil
+        )
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(checkScheduledUpdates), name: NSWorkspace.didWakeNotification, object: nil
+        )
         refreshRuntimeStatus()
     }
 
@@ -214,6 +236,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
                 self.failedDSHVersion = nil
                 self.showWebInterface(at: result.address)
                 self.reportServiceStatus("运行中 · \(result.version)", isRunning: true)
+                self.scheduleUpdateCheckIfNeeded(using: runtime)
             } catch {
                 self.isLaunchingDeepSeekHarness = false
                 self.failedDSHVersion = self.runtimeManager.preferredRuntimeVersion()
@@ -293,6 +316,13 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
         hideWebOperationStatus()
         activeDSHVersion = nil
         reportServiceStatus("DSH 已停止", isRunning: false)
+    }
+
+    func stopUpdateChecks() {
+        updateCheckTimer?.invalidate()
+        updateCheckTimer = nil
+        NotificationCenter.default.removeObserver(self, name: NSApplication.didBecomeActiveNotification, object: nil)
+        NSWorkspace.shared.notificationCenter.removeObserver(self, name: NSWorkspace.didWakeNotification, object: nil)
     }
 
     func restartDeepSeekHarness() {
@@ -406,6 +436,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     }
 
     func checkForUpdatesNow() {
+        guard !isUpdateOperationInProgress, !isLaunchingDeepSeekHarness else { return }
         guard case let .ready(runtime) = NodeRuntimeDetector().detect(preferredNodeURL: preferredNodeURL) else {
             onUpdateCheckStatusChanged?("失败：Node.js 尚未就绪，无法检查 DSH 更新。")
             return
@@ -599,6 +630,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
                 self.failedDSHVersion = nil
                 self.showWebInterface(at: result.address)
                 self.reportServiceStatus("运行中 · \(result.version)", isRunning: true)
+                self.scheduleUpdateCheckIfNeeded(using: runtime)
             } catch {
                 self.isLaunchingDeepSeekHarness = false
                 self.failedDSHVersion = self.runtimeManager.preferredRuntimeVersion()
@@ -608,20 +640,31 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     }
 
     private func scheduleUpdateCheckIfNeeded(using runtime: NodeRuntime) {
-        guard AppSettings.shared.shouldCheckForUpdates() else { return }
+        guard !didCheckUpdatesAtLaunch else { return }
+        didCheckUpdatesAtLaunch = true
+        guard AppSettings.shared.shouldCheckForUpdates(), !isUpdateOperationInProgress else { return }
+        performUpdateCheck(using: runtime)
+    }
+
+    @objc func checkScheduledUpdates() {
+        guard activeDSHVersion != nil, !isLaunchingDeepSeekHarness, !isUpdateOperationInProgress,
+              AppSettings.shared.shouldCheckForUpdates(
+                isApplicationLaunch: false, lastAttemptDate: lastUpdateCheckAttempt
+              ) else { return }
+        lastUpdateCheckAttempt = Date()
+        guard case let .ready(runtime) = NodeRuntimeDetector().detect(preferredNodeURL: preferredNodeURL) else { return }
         performUpdateCheck(using: runtime)
     }
 
     private func performUpdateCheck(using runtime: NodeRuntime) {
-        guard !isCheckingForUpdates else {
-            onUpdateCheckStatusChanged?("正在检查更新…")
-            return
-        }
+        guard !isUpdateOperationInProgress else { return }
+        let registry = AppSettings.shared.registry
+        let additionalTag = AppSettings.shared.additionalUpdateTagEnabled ? AppSettings.shared.updateChannel : nil
         isCheckingForUpdates = true
+        lastUpdateCheckAttempt = Date()
         onUpdateCheckStatusChanged?("正在检查更新…")
         Task { [weak self] in
             guard let self else { return }
-            defer { self.isCheckingForUpdates = false }
             do {
                 let result = try await self.runtimeManager.checkForUpdates(
                     using: runtime,
@@ -630,46 +673,59 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
                         self?.onUpdateCheckStatusChanged?(status)
                     }
                 )
+                let currentTag = AppSettings.shared.additionalUpdateTagEnabled ? AppSettings.shared.updateChannel : nil
+                guard registry == AppSettings.shared.registry, additionalTag == currentTag else {
+                    self.isCheckingForUpdates = false
+                    self.lastUpdateCheckAttempt = nil
+                    self.onUpdateCheckStatusChanged?("更新来源已变更，请重新检查。")
+                    return
+                }
                 AppSettings.shared.lastUpdateCheckDate = Date()
                 self.recordAvailableUpdateVersion(result.version)
+                AppSettings.shared.availableUpdateIsDownloaded = result.isInstalled
                 let unavailableSuffix = result.unavailableTags.isEmpty
                     ? ""
                     : "（未能检查 \(result.unavailableTags.joined(separator: "、"))）"
                 let message: String
-                switch result {
-                case .downloaded:
-                    message = updateDownloadedMessage(
-                        version: result.version,
-                        unavailableSuffix: unavailableSuffix
-                    )
-                case .alreadyInstalled:
-                    message = updateInstalledMessage(
-                        version: result.version,
-                        unavailableSuffix: unavailableSuffix
-                    )
+                if AppSettings.shared.availableUpdateVersion == nil {
+                    message = "当前已是最新版本。\(unavailableSuffix)"
+                } else if result.isInstalled {
+                    message = "新版本 \(result.version) 已下载。\(unavailableSuffix)"
+                } else {
+                    message = "发现新版本 \(result.version)，是否下载？\(unavailableSuffix)"
                 }
+                self.isCheckingForUpdates = false
                 self.onUpdateCheckStatusChanged?(message)
             } catch {
+                self.isCheckingForUpdates = false
                 self.onUpdateCheckStatusChanged?("失败：\(error.localizedDescription)")
             }
         }
     }
 
-    private func updateDownloadedMessage(
-        version: String,
-        unavailableSuffix: String
-    ) -> String {
-        return "新版本 \(version) 已下载。\(unavailableSuffix)"
-    }
-
-    private func updateInstalledMessage(
-        version: String,
-        unavailableSuffix: String
-    ) -> String {
-        guard let activeDSHVersion, activeDSHVersion != version else {
-            return "当前正在运行最新版本。\(unavailableSuffix)"
+    func downloadAvailableUpdate() {
+        guard canDownloadUpdate, let version = AppSettings.shared.availableUpdateVersion else { return }
+        guard case let .ready(runtime) = NodeRuntimeDetector().detect(preferredNodeURL: preferredNodeURL) else {
+            onUpdateCheckStatusChanged?("失败：Node.js 尚未就绪，无法下载 DSH 更新。")
+            return
         }
-        return "新版本 \(version) 已下载。\(unavailableSuffix)"
+        isDownloadingUpdate = true
+        onUpdateCheckStatusChanged?("正在下载 DSH \(version)…")
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await self.runtimeManager.downloadVersion(version, using: runtime)
+                if AppSettings.shared.availableUpdateVersion == version {
+                    AppSettings.shared.availableUpdateIsDownloaded = true
+                }
+                self.isDownloadingUpdate = false
+                self.onUpdateCheckStatusChanged?("新版本 \(version) 已下载，可在 DSH 版本中选择。")
+            } catch {
+                AppSettings.shared.availableUpdateIsDownloaded = false
+                self.isDownloadingUpdate = false
+                self.onUpdateCheckStatusChanged?("下载 \(version) 失败：\(error.localizedDescription) 请重试下载。")
+            }
+        }
     }
 
     private func recordAvailableUpdateVersion(_ version: String) {
@@ -692,6 +748,9 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
             return
         }
         recordAvailableUpdateVersion(availableVersion)
+        if AppSettings.shared.availableUpdateVersion == nil {
+            onUpdateCheckStatusChanged?("当前已是最新版本。")
+        }
     }
 
     private func reportServiceStatus(_ status: String, isRunning: Bool) {
