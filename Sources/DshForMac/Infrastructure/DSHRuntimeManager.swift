@@ -70,6 +70,7 @@ enum DSHRuntimeError: LocalizedError {
     case installFailed(String)
     case integrityMismatch
     case executableMissing
+    case nativeDependencyMissing(String)
     case selectedVersionUnavailable(String)
     case portInUse(Int)
     case startupFailed(String)
@@ -89,6 +90,8 @@ enum DSHRuntimeError: LocalizedError {
             "已安装包的完整性校验失败，未启动 DSH。"
         case .executableMissing:
             "安装完成后未找到 DSH 可执行文件。"
+        case let .nativeDependencyMissing(module):
+            "原生依赖 \(module) 未构建成功。请检查 Node.js 开发工具链后重试下载。"
         case let .selectedVersionUnavailable(version):
             "所选 DSH 版本 \(version) 不可用。请选择另一个已安装版本。"
         case let .startupFailed(reason):
@@ -119,6 +122,7 @@ final class DSHRuntimeManager {
     private var managedServerPID: pid_t?
     private var expectedProcessTerminations = Set<pid_t>()
     private var recentOutput = ""
+    private(set) var lastAttemptedVersion: String?
 
     private enum PackageManager {
         case pnpm(URL)
@@ -137,6 +141,13 @@ final class DSHRuntimeManager {
                 ["install", "--prod", "--no-frozen-lockfile", "--config.confirmModulesPurge=false"]
             case .npm:
                 ["install", "--omit=dev", "--no-audit", "--no-fund"]
+            }
+        }
+
+        var rebuildArguments: [String] {
+            switch self {
+            case .pnpm: ["rebuild", "--pending"]
+            case .npm: ["rebuild"]
             }
         }
 
@@ -206,9 +217,7 @@ final class DSHRuntimeManager {
         let rootDirectory = try applicationSupportDirectory()
         let versionsDirectory = runtimeVersionsDirectory(in: rootDirectory)
         let environment = processEnvironment(for: runtime)
-        let version = preferredVersion
-            ?? settings.selectedRuntimeVersion
-            ?? currentRuntimeVersion(in: rootDirectory)
+        let version = runtimeVersionForRestart(preferredVersion: preferredVersion)
 
         guard let version else {
             return try await start(using: runtime)
@@ -277,8 +286,23 @@ final class DSHRuntimeManager {
     private func isReleaseInstalled(_ release: DSHRelease, in directory: URL) -> Bool {
         guard fileManager.isExecutableFile(atPath: directory.appendingPathComponent("node_modules/.bin/dsh").path)
         else { return false }
+        guard !hasMissingNativeDependencies(in: directory) else { return false }
         return (try? verifyNpmIntegrity(of: release, in: directory)) != nil
             || (try? verifyPnpmIntegrity(of: release, in: directory)) != nil
+    }
+
+    private func hasMissingNativeDependencies(in runtimeDirectory: URL) -> Bool {
+        guard hasInstalledPackage(named: "fs-ext", in: runtimeDirectory) else { return false }
+        let packageDirectories = (try? fileManager.contentsOfDirectory(
+            at: runtimeDirectory.appendingPathComponent("node_modules/.pnpm", isDirectory: true),
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        )) ?? []
+        guard let fsExtDirectory = packageDirectories.first(where: { $0.lastPathComponent.hasPrefix("fs-ext@") }) else {
+            return true
+        }
+        return !fileManager.fileExists(atPath: fsExtDirectory
+            .appendingPathComponent("node_modules/fs-ext/build/Release/fs_ext.node").path)
     }
 
     private func downloadRelease(
@@ -308,6 +332,7 @@ final class DSHRuntimeManager {
             statusHandler("正在通过 \(packageManager.displayName) 下载 DSH \(release.version)…")
         }
         try writeManifest(for: release, to: runtimeDirectory)
+        try writePnpmWorkspaceConfig(to: runtimeDirectory)
         let installResult = try await runToCompletion(
             executableURL: packageManager.executableURL,
             arguments: packageManager.installArguments,
@@ -324,7 +349,35 @@ final class DSHRuntimeManager {
                 throw DSHRuntimeError.installFailed(compact(installResult.standardError + installResult.standardOutput))
             }
         }
+        if reportsProgress {
+            statusHandler("正在构建 DSH 原生依赖…")
+        }
+        var rebuildArguments = packageManager.rebuildArguments
+        if case .pnpm = packageManager, hasInstalledPackage(named: "fs-ext", in: runtimeDirectory) {
+            rebuildArguments.insert("fs-ext", at: 1)
+        }
+        let rebuildResult = try await runToCompletion(
+            executableURL: packageManager.executableURL,
+            arguments: rebuildArguments,
+            directoryURL: runtimeDirectory,
+            environment: environment
+        )
+        guard rebuildResult.exitCode == 0 else {
+            throw DSHRuntimeError.installFailed(
+                compact(rebuildResult.standardError + rebuildResult.standardOutput)
+            )
+        }
+        if hasMissingNativeDependencies(in: runtimeDirectory) {
+            throw DSHRuntimeError.nativeDependencyMissing("fs-ext/build/Release/fs_ext.node")
+        }
         try verifyIntegrity(of: release, in: runtimeDirectory, packageManager: packageManager)
+    }
+
+    private func hasInstalledPackage(named name: String, in runtimeDirectory: URL) -> Bool {
+        let virtualStore = runtimeDirectory.appendingPathComponent("node_modules/.pnpm", isDirectory: true)
+        return (try? fileManager.contentsOfDirectory(atPath: virtualStore.path))?.contains {
+            $0 == name || $0.hasPrefix("\(name)@")
+        } == true
     }
 
     func installedVersions() -> [String] {
@@ -396,6 +449,20 @@ final class DSHRuntimeManager {
         return settings.selectedRuntimeVersion
             ?? currentRuntimeVersion(in: rootDirectory)
             ?? versionDirectories(in: runtimeVersionsDirectory(in: rootDirectory)).first?.version
+    }
+
+    func runtimeVersionForRestart(preferredVersion: String? = nil) -> String? {
+        preferredVersion ?? settings.selectedRuntimeVersion ?? lastAttemptedVersion ?? preferredRuntimeVersion()
+    }
+
+    /// `current` still points to the last healthy runtime when a new version fails.
+    func rollbackRuntimeVersion(excluding failedVersion: String?) -> String? {
+        guard let root = try? applicationSupportDirectory(),
+              let version = currentRuntimeVersion(in: root), version != failedVersion,
+              fileManager.isExecutableFile(atPath: runtimeVersionsDirectory(in: root)
+                .appendingPathComponent(version).appendingPathComponent("node_modules/.bin/dsh").path)
+        else { return nil }
+        return version
     }
 
     func removeRuntimeVersion(_ version: String) throws {
@@ -608,6 +675,7 @@ final class DSHRuntimeManager {
         port: Int,
         environment: [String: String]
     ) async throws -> DSHStartupResult {
+        lastAttemptedVersion = version
         let runtimeDirectory = versionsDirectory.appendingPathComponent(version, isDirectory: true)
         let executableURL = runtimeDirectory.appendingPathComponent("node_modules/.bin/dsh")
         guard fileManager.isExecutableFile(atPath: executableURL.path) else {
@@ -620,7 +688,7 @@ final class DSHRuntimeManager {
             environment: environment
         )
 
-        statusHandler("正在启动 DSH \(version)…")
+        statusHandler("正在启动 DSH \(version)")
         let address = URL(string: "http://127.0.0.1:\(port)/")!
         await stopRunningProcess()
         try await stopExistingManagedServer(in: rootDirectory, port: port)
@@ -830,8 +898,25 @@ final class DSHRuntimeManager {
         try data.write(to: directory.appendingPathComponent("package.json"), options: .atomic)
     }
 
+    private func writePnpmWorkspaceConfig(to directory: URL) throws {
+        let config = """
+        allowBuilds:
+          '@deepseek-ai/dsh-subprocess-local': true
+          '@google/genai': true
+          fs-ext: true
+          koffi: true
+          node-pty: true
+          protobufjs: true
+        """
+        try config.write(
+            to: directory.appendingPathComponent("pnpm-workspace.yaml"),
+            atomically: true,
+            encoding: .utf8
+        )
+    }
+
     private func removeIncompleteInstallation(in directory: URL) throws {
-        let paths = ["node_modules", "package-lock.json", "pnpm-lock.yaml"]
+        let paths = ["node_modules", "package-lock.json", "pnpm-lock.yaml", "pnpm-workspace.yaml"]
         for path in paths {
             let item = directory.appendingPathComponent(path)
             if fileManager.fileExists(atPath: item.path) {
@@ -887,7 +972,6 @@ final class DSHRuntimeManager {
         let outputPipe = Pipe()
         let errorPipe = Pipe()
         let outputCollector = OutputCollector()
-        let errorCollector = OutputCollector()
         let entryPointURL = directoryURL.appendingPathComponent("node_modules/@deepseek-ai/dsh/lib/bin.js")
         process.executableURL = nodeURL
         process.arguments = [
@@ -902,15 +986,15 @@ final class DSHRuntimeManager {
         process.standardOutput = outputPipe
         process.standardError = errorPipe
         captureOutput(from: outputPipe, collector: outputCollector)
-        captureOutput(from: errorPipe, collector: errorCollector)
+        captureOutput(from: errorPipe, collector: outputCollector)
         process.terminationHandler = { [weak self] terminatedProcess in
             // The last diagnostic may still be waiting in a pipe when Process
             // invokes this callback. Drain both streams before interpreting it.
             outputPipe.fileHandleForReading.readabilityHandler = nil
             errorPipe.fileHandleForReading.readabilityHandler = nil
             outputCollector.append(outputPipe.fileHandleForReading.readDataToEndOfFile())
-            errorCollector.append(errorPipe.fileHandleForReading.readDataToEndOfFile())
-            let runtimeOutput = outputCollector.string + errorCollector.string
+            outputCollector.append(errorPipe.fileHandleForReading.readDataToEndOfFile())
+            let runtimeOutput = outputCollector.string
 
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -924,6 +1008,7 @@ final class DSHRuntimeManager {
                 self.unexpectedTerminationHandler(
                     terminatedProcess.terminationStatus,
                     Self.conciseRuntimeFailure(from: runtimeOutput)
+                        ?? Self.conciseMissingModuleFailure(from: runtimeOutput)
                 )
             }
         }
@@ -1000,7 +1085,9 @@ final class DSHRuntimeManager {
         while Date() < deadline {
             if dshProcess == nil {
                 throw DSHRuntimeError.startupFailed(
-                    Self.conciseRuntimeFailure(from: output.string) ?? "DSH 进程在完成健康检查前退出。"
+                    Self.conciseRuntimeFailure(from: output.string)
+                        ?? Self.conciseMissingModuleFailure(from: output.string)
+                        ?? "DSH 进程在完成健康检查前退出。"
                 )
             }
             if await respondsAt(address) {
@@ -1024,7 +1111,9 @@ final class DSHRuntimeManager {
             }
             if dshProcess == nil {
                 throw DSHRuntimeError.startupFailed(
-                    Self.conciseRuntimeFailure(from: output.string) ?? "DSH 进程在完成健康检查前退出。"
+                    Self.conciseRuntimeFailure(from: output.string)
+                        ?? Self.conciseMissingModuleFailure(from: output.string)
+                        ?? "DSH 进程在完成健康检查前退出。"
                 )
             }
             try await Task.sleep(nanoseconds: 100_000_000)
@@ -1047,6 +1136,15 @@ final class DSHRuntimeManager {
         let module = output[moduleRange]
         let exportName = output[exportRange]
         return "插件不兼容：\(plugin) 无法使用 \(module) 的 \(exportName) 导出。请选择兼容的已安装版本。"
+    }
+
+    nonisolated static func conciseMissingModuleFailure(from output: String) -> String? {
+        let pattern = "Cannot find module '([^']+)'"
+        guard let expression = try? NSRegularExpression(pattern: pattern),
+              let match = expression.firstMatch(in: output, range: NSRange(output.startIndex..., in: output)),
+              let moduleRange = Range(match.range(at: 1), in: output)
+        else { return nil }
+        return "DSH 启动依赖缺失：找不到模块 \(output[moduleRange])。请重新下载该 DSH 版本以重建原生依赖。"
     }
 
     nonisolated static func authenticatedWebURL(from output: String, port: Int) -> URL? {

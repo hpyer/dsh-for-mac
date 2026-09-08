@@ -11,6 +11,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     private let statusLabel = NSTextField(labelWithString: "正在检测 Node.js…")
     private let detailLabel = NSTextField(wrappingLabelWithString: "")
     private let primaryButton = NSButton(title: "重新检测", target: nil, action: nil)
+    private let rollbackButton = NSButton(title: "退回上一版本", target: nil, action: nil)
     private let redownloadButton = NSButton(title: "重新下载 DSH", target: nil, action: nil)
     private let chooseNodeButton = NSButton(title: "选择 Node.js 路径", target: nil, action: nil)
     private let nodeWebsiteButton = NSButton(title: "打开 Node.js 官网", target: nil, action: nil)
@@ -143,6 +144,9 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
 
         primaryButton.target = self
         primaryButton.action = #selector(primaryButtonPressed)
+        rollbackButton.target = self
+        rollbackButton.action = #selector(rollbackDeepSeekHarness)
+        rollbackButton.isHidden = true
         redownloadButton.target = self
         redownloadButton.action = #selector(redownloadDeepSeekHarness)
         chooseNodeButton.target = self
@@ -154,6 +158,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
         environmentStack.addArrangedSubview(statusLabel)
         environmentStack.addArrangedSubview(detailLabel)
         environmentStack.addArrangedSubview(primaryButton)
+        environmentStack.addArrangedSubview(rollbackButton)
         environmentStack.addArrangedSubview(redownloadButton)
         environmentStack.addArrangedSubview(chooseNodeButton)
         environmentStack.addArrangedSubview(nodeWebsiteButton)
@@ -186,6 +191,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     private func startDeepSeekHarness(using runtime: NodeRuntime) {
         guard !isLaunchingDeepSeekHarness else { return }
         isLaunchingDeepSeekHarness = true
+        rollbackButton.isHidden = true
         primaryButton.isEnabled = false
         redownloadButton.isEnabled = false
         chooseNodeButton.isEnabled = false
@@ -207,7 +213,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
                 self.scheduleUpdateCheckIfNeeded(using: runtime)
             } catch {
                 self.isLaunchingDeepSeekHarness = false
-                self.failedDSHVersion = self.runtimeManager.preferredRuntimeVersion()
+                self.failedDSHVersion = self.runtimeManager.lastAttemptedVersion ?? self.runtimeManager.preferredRuntimeVersion()
                 self.showStartupError(error)
             }
         }
@@ -216,8 +222,9 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     private func restartDeepSeekHarness(using runtime: NodeRuntime, preferredVersion: String? = nil) {
         guard !isLaunchingDeepSeekHarness else { return }
         isLaunchingDeepSeekHarness = true
-        let version = preferredVersion ?? activeDSHVersion ?? failedDSHVersion
-        let startupStatus = version.map { "正在启动 DSH \($0)…" } ?? "正在启动 DSH…"
+        rollbackButton.isHidden = true
+        let version = runtimeManager.runtimeVersionForRestart(preferredVersion: preferredVersion)
+        let startupStatus = version.map { "\($0)" } ?? "正在启动 DSH…"
         showStartupProgress(
             status: startupStatus,
             detail: "正在重新启动本地服务，请保持窗口打开。"
@@ -239,7 +246,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
                 self.scheduleUpdateCheckIfNeeded(using: runtime)
             } catch {
                 self.isLaunchingDeepSeekHarness = false
-                self.failedDSHVersion = self.runtimeManager.preferredRuntimeVersion()
+                self.failedDSHVersion = self.runtimeManager.lastAttemptedVersion ?? self.runtimeManager.preferredRuntimeVersion()
                 self.showStartupError(error)
             }
         }
@@ -282,6 +289,8 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     }
 
     private func showStartupError(_ error: Error) {
+        activeDSHVersion = nil
+        refreshRollbackButton()
         hideWebOperationStatus()
         showEnvironmentView()
         primaryButton.isEnabled = true
@@ -296,8 +305,24 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
         reportServiceStatus("DSH 启动失败", isRunning: false)
     }
 
+    private func refreshRollbackButton() {
+        let version = runtimeManager.rollbackRuntimeVersion(excluding: failedDSHVersion)
+        rollbackButton.isHidden = version == nil
+        rollbackButton.title = version.map { "退回上一版本（\($0)）" } ?? "退回上一版本"
+    }
+
+    @objc private func rollbackDeepSeekHarness() {
+        guard !isLaunchingDeepSeekHarness, !isUpdateOperationInProgress,
+              let version = runtimeManager.rollbackRuntimeVersion(excluding: failedDSHVersion) else { return }
+        // An explicit rollback changes both the requested and displayed version.
+        selectDSHVersion(version)
+    }
+
     private func handleUnexpectedTermination(statusCode: Int32, diagnostic: String?) {
         guard !isLaunchingDeepSeekHarness else { return }
+        failedDSHVersion = activeDSHVersion ?? runtimeManager.lastAttemptedVersion
+        activeDSHVersion = nil
+        refreshRollbackButton()
         showEnvironmentView()
         primaryButton.isEnabled = true
         redownloadButton.isEnabled = true
@@ -445,6 +470,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     }
 
     @objc private func refreshRuntimeStatus() {
+        rollbackButton.isHidden = true
         let status = NodeRuntimeDetector().detect(preferredNodeURL: preferredNodeURL)
         statusLabel.stringValue = status.title
         detailLabel.stringValue = status.detail
@@ -522,6 +548,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     /// Uses the same presentation for an initial launch and a subsequent
     /// restart, rather than leaving a dimmed WebView visible underneath.
     private func showStartupProgress(status: String, detail: String) {
+        rollbackButton.isHidden = true
         showEnvironmentView()
         statusLabel.stringValue = status
         detailLabel.stringValue = detail
@@ -615,6 +642,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
         }
 
         isLaunchingDeepSeekHarness = true
+        rollbackButton.isHidden = true
         primaryButton.isEnabled = false
         redownloadButton.isEnabled = false
         statusLabel.stringValue = "正在重新下载 DSH…"
@@ -633,7 +661,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
                 self.scheduleUpdateCheckIfNeeded(using: runtime)
             } catch {
                 self.isLaunchingDeepSeekHarness = false
-                self.failedDSHVersion = self.runtimeManager.preferredRuntimeVersion()
+                self.failedDSHVersion = self.runtimeManager.lastAttemptedVersion ?? self.runtimeManager.preferredRuntimeVersion()
                 self.showStartupError(error)
             }
         }

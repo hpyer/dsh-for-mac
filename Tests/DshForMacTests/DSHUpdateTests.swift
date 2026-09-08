@@ -103,6 +103,19 @@ struct DSHUpdateTests {
         #expect(commands.filter { $0.hasPrefix("install ") }.count == 2)
         #expect(!FileManager.default.fileExists(atPath: fixture.root.appendingPathComponent("DshForMac/runtimes/current").path))
     }
+
+    @Test func restartPrefersSelectedVersionAndExplainsMissingNativeModule() throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        fixture.settings.selectedRuntimeVersion = "0.1.3-alpha.2"
+        let manager = fixture.manager()
+        #expect(manager.runtimeVersionForRestart() == "0.1.3-alpha.2")
+        #expect(
+            DSHRuntimeManager.conciseMissingModuleFailure(
+                from: "Error: Cannot find module './build/Release/fs_ext.node'"
+            ) == "DSH 启动依赖缺失：找不到模块 ./build/Release/fs_ext.node。请重新下载该 DSH 版本以重建原生依赖。"
+        )
+    }
 }
 
 @MainActor
@@ -137,6 +150,8 @@ private final class Fixture {
             printf '#!/bin/sh\nexit 0\n' > node_modules/.bin/dsh
             /bin/chmod +x node_modules/.bin/dsh
             printf '%s\n' '{"packages":{"node_modules/@deepseek-ai/dsh":{"integrity":"sha512-test"}}}' > package-lock.json
+            ;;
+          rebuild)
             ;;
           *) exit 1 ;;
         esac
