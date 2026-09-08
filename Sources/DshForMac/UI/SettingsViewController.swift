@@ -96,6 +96,8 @@ final class SettingsViewController: NSViewController {
     }
 
     private func configureView() {
+        let appVersionValue = NSTextField(labelWithString: AppMetadata.version)
+        appVersionValue.textColor = .secondaryLabelColor
         statusValue.lineBreakMode = .byTruncatingMiddle
         statusValue.textColor = .secondaryLabelColor
         statusValue.maximumNumberOfLines = 1
@@ -169,6 +171,7 @@ final class SettingsViewController: NSViewController {
         additionalTagControls.spacing = 8
 
         let content = NSStackView(views: [
+            makeRow(label: "DshForMac", value: appVersionValue),
             makeRow(label: "运行状态", value: statusValue),
             makeRow(label: "运行端口", value: portField),
             makeRow(label: "DSH 版本", value: runtimeControls),
@@ -196,15 +199,28 @@ final class SettingsViewController: NSViewController {
     }
 
     private func pluginControls() -> NSStackView {
+        let githubButton = NSButton(title: "Github", target: self, action: #selector(openDSHMarketRepository))
+        githubButton.isBordered = false
+        githubButton.contentTintColor = .linkColor
+        githubButton.toolTip = "https://github.com/dsh-market/dsh-market"
+        let marketControls = NSStackView(views: [dshMarketCheckbox, githubButton])
+        marketControls.orientation = .horizontal
+        marketControls.alignment = .centerY
+        marketControls.spacing = 8
         let details = NSTextField(wrappingLabelWithString: "勾选状态会在保存后写入 DSH 的 web profile。")
         details.textColor = .secondaryLabelColor
         details.maximumNumberOfLines = 2
         details.preferredMaxLayoutWidth = 250
-        let controls = NSStackView(views: [dshMarketCheckbox, workspaceDrop2AddCheckbox, details, pluginStatusLabel])
+        let controls = NSStackView(views: [marketControls, workspaceDrop2AddCheckbox, details, pluginStatusLabel])
         controls.orientation = .vertical
         controls.alignment = .leading
         controls.spacing = 6
         return controls
+    }
+
+    @objc private func openDSHMarketRepository() {
+        guard let url = URL(string: "https://github.com/dsh-market/dsh-market") else { return }
+        NSWorkspace.shared.open(url)
     }
 
     private func updateRecommendedPlugins(

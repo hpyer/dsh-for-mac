@@ -353,7 +353,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
                 }
             )
             let settingsWindow = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 440, height: 510),
+                contentRect: NSRect(x: 0, y: 0, width: 440, height: 550),
                 styleMask: [.titled, .closable, .miniaturizable],
                 backing: .buffered,
                 defer: false
