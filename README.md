@@ -1,6 +1,6 @@
 # DshForMac
 
-**DshForMac（DeepSeek Harness for Mac）** 是 [DeepSeek Harness（DSH）](https://www.npmjs.com/package/@deepseek-ai/dsh) 的原生 macOS 启动器与本地容器。它负责检测本机 Node.js、下载和管理经过校验的 DSH 版本、启动本地 DSH Web 服务，并在应用窗口中显示 DSH 界面。
+**DshForMac（DeepSeek Harness for Mac）** 是 [DeepSeek Harness（DSH）](https://github.com/deepseek-ai/deepseek-harness) 的原生 macOS 启动器与本地容器。它负责检测本机 Node.js、下载和管理经过校验的 DSH 版本、启动本地 DSH Web 服务，并在应用窗口中显示 DSH 界面。
 
 它不是 DSH 的分叉实现，不会重定向 DSH 的用户数据，也不会修改全局 npm、pnpm、Node.js 或 shell 配置。
 
@@ -14,7 +14,7 @@
 - 使用内嵌 WebView 打开本机 DSH 服务，默认地址为 `http://127.0.0.1:3080`；端口可在设置中修改。
 - 提供 DSH 版本选择、更新检查频率、可显式启用的 alpha/beta/next 预发布标签、包下载镜像、端口设置、一键重启与菜单栏控制。
 - 设置中可一键启用或禁用推荐插件：已安装的 DSH Market 会自动识别；启用“拖入文件夹添加工作区”后，Finder 文件夹拖到左侧栏会创建 DSH 工作区，右侧仍按 DSH 原逻辑添加对话附件。
-- 可在应用右侧只读预览 DSH 产出的文本、Markdown、图片和 SVG 文件。
+- ~~可在应用右侧只读预览 DSH 产出的文本、Markdown、图片和 SVG 文件。~~ `DSH 0.1.5-alpha.1` 开始已经内置右侧预览窗口，此功能不再迭代，只留作兼容旧聊天内的链接。等DSH正式版发布后将移除相关代码。
 
 ## 系统要求
 
