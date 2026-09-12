@@ -2,6 +2,12 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 的记录方式。
 
+## [0.3.5] - 2026-09-12
+
+### 修复
+
+- 为 macOS 13 的旧版 WebKit 补充 `Iterator` 兼容实现，修复 DSH 0.1.5-rc.1 文档预览插件导致整个插件树加载失败的问题，并同步兼容其 PDF Worker。
+
 ## [0.3.4] - 2026-09-08
 
 ### 修复
