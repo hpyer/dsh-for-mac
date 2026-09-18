@@ -84,6 +84,7 @@ final class AppSettings {
         static let updateCheckInterval = "dshUpdateCheckInterval"
         static let additionalUpdateTagEnabled = "dshAdditionalUpdateTagEnabled"
         static let updateChannel = "dshUpdateChannel"
+        static let updateTags = "dshUpdateTags"
         static let lastUpdateCheckDate = "dshLastUpdateCheckDate"
         static let availableUpdateVersion = "dshAvailableUpdateVersion"
         static let availableUpdateIsDownloaded = "dshAvailableUpdateIsDownloaded"
@@ -146,28 +147,26 @@ final class AppSettings {
         }
     }
 
-    var updateChannel: DSHUpdateChannel {
+    /// Always includes latest; older single-tag preferences remain effective until edited.
+    var updateTags: [String] {
         get {
-            guard let value = defaults.string(forKey: Key.updateChannel),
-                  let channel = DSHUpdateChannel(rawValue: value)
-            else {
-                return .alpha
+            let selected: [String]
+            if let stored = defaults.stringArray(forKey: Key.updateTags) {
+                selected = stored
+            } else if defaults.bool(forKey: Key.additionalUpdateTagEnabled) {
+                let channel = defaults.string(forKey: Key.updateChannel)
+                    .flatMap(DSHUpdateChannel.init(rawValue:)) ?? .alpha
+                selected = [channel.rawValue]
+            } else {
+                selected = []
             }
-            return channel
+            return ["latest"] + DSHUpdateChannel.allCases.map(\.rawValue).filter { selected.contains($0) }
         }
         set {
-            guard updateChannel != newValue else { return }
-            defaults.set(newValue.rawValue, forKey: Key.updateChannel)
-            lastUpdateCheckDate = nil
-        }
-    }
-
-    var additionalUpdateTagEnabled: Bool {
-        get { defaults.bool(forKey: Key.additionalUpdateTagEnabled) }
-        set {
-            guard additionalUpdateTagEnabled != newValue else { return }
-            defaults.set(newValue, forKey: Key.additionalUpdateTagEnabled)
-            lastUpdateCheckDate = nil
+            let normalized = ["latest"] + DSHUpdateChannel.allCases.map(\.rawValue).filter { newValue.contains($0) }
+            let changed = updateTags != normalized
+            defaults.set(normalized, forKey: Key.updateTags)
+            if changed { lastUpdateCheckDate = nil }
         }
     }
 

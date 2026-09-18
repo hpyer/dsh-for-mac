@@ -1,9 +1,76 @@
+import AppKit
 import Foundation
 import Testing
 @testable import DshForMac
 
 @MainActor
 struct DSHUpdateTests {
+    @Test func updateTagsPreserveLegacySelectionAndAlwaysIncludeLatest() throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        #expect(fixture.settings.updateTags == ["latest"])
+        fixture.defaults.set(true, forKey: "dshAdditionalUpdateTagEnabled")
+        fixture.defaults.set("beta", forKey: "dshUpdateChannel")
+        #expect(fixture.settings.updateTags == ["latest", "beta"])
+        fixture.settings.lastUpdateCheckDate = Date()
+        fixture.settings.updateTags = ["next", "alpha", "alpha", "unknown"]
+        #expect(fixture.settings.lastUpdateCheckDate == nil)
+        #expect(AppSettings(defaults: fixture.defaults).updateTags == ["latest", "alpha", "next"])
+        fixture.settings.updateTags = []
+        #expect(AppSettings(defaults: fixture.defaults).updateTags == ["latest"])
+    }
+
+    @Test func settingsControlsApplySourcesBeforeCheckingWithoutSaving() throws {
+        _ = NSApplication.shared
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        var checkedTags: [String] = []
+        var checkedRegistry: PackageRegistry?
+        var didApply = false
+        let controller = SettingsViewController(
+            settings: fixture.settings,
+            onApply: { _, _, _ in didApply = true },
+            onCheckUpdates: {
+                checkedTags = fixture.settings.updateTags
+                checkedRegistry = fixture.settings.registry
+            },
+            onDownloadUpdate: {}, onOpenVersionsDirectory: {}
+        )
+        func descendants(_ view: NSView) -> [NSView] {
+            [view] + view.subviews.flatMap(descendants)
+        }
+        let views = descendants(controller.view)
+        let buttons = views.compactMap { $0 as? NSButton }
+        let latest = try #require(buttons.first { $0.title == "latest" })
+        #expect(latest.state == .on)
+        #expect(!latest.isEnabled)
+        for tag in ["alpha", "beta", "next"] {
+            let checkbox = try #require(buttons.first { $0.title == tag })
+            checkbox.state = .on
+            checkbox.sendAction(checkbox.action, to: checkbox.target)
+        }
+        let registry = try #require(views.compactMap { $0 as? NSPopUpButton }.first {
+            $0.itemTitles.contains(PackageRegistry.npm.displayName)
+        })
+        registry.selectItem(withTitle: PackageRegistry.npm.displayName)
+        registry.sendAction(registry.action, to: registry.target)
+        let check = try #require(buttons.first { $0.title == "立即检查" })
+        check.sendAction(check.action, to: check.target)
+        #expect(checkedTags == ["latest", "alpha", "beta", "next"])
+        #expect(checkedRegistry == .npm)
+        #expect(!didApply)
+    }
+
+    @Test func checksEverySelectedTag() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        fixture.settings.updateTags = ["alpha", "beta", "next"]
+        _ = try await fixture.manager().checkForUpdates(using: fixture.runtime, reportsProgress: false)
+        #expect(try fixture.commands() == ["latest", "alpha", "beta", "next"].map {
+            "view @deepseek-ai/dsh@\($0) version dist.integrity --json"
+        })
+    }
+
     @Test func periodicChecksBecomeDueWhileApplicationRemainsOpen() throws {
         let fixture = try Fixture()
         defer { fixture.cleanUp() }

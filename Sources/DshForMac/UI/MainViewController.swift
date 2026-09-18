@@ -687,7 +687,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     private func performUpdateCheck(using runtime: NodeRuntime) {
         guard !isUpdateOperationInProgress else { return }
         let registry = AppSettings.shared.registry
-        let additionalTag = AppSettings.shared.additionalUpdateTagEnabled ? AppSettings.shared.updateChannel : nil
+        let updateTags = AppSettings.shared.updateTags
         isCheckingForUpdates = true
         lastUpdateCheckAttempt = Date()
         onUpdateCheckStatusChanged?("正在检查更新…")
@@ -701,8 +701,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
                         self?.onUpdateCheckStatusChanged?(status)
                     }
                 )
-                let currentTag = AppSettings.shared.additionalUpdateTagEnabled ? AppSettings.shared.updateChannel : nil
-                guard registry == AppSettings.shared.registry, additionalTag == currentTag else {
+                guard registry == AppSettings.shared.registry, updateTags == AppSettings.shared.updateTags else {
                     self.isCheckingForUpdates = false
                     self.lastUpdateCheckAttempt = nil
                     self.onUpdateCheckStatusChanged?("更新来源已变更，请重新检查。")

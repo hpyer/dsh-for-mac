@@ -6,8 +6,7 @@ final class SettingsViewController: NSViewController {
     private let openVersionsButton = NSButton(title: "打开目录", target: nil, action: nil)
     private let registryPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let updateIntervalPopup = NSPopUpButton(frame: .zero, pullsDown: false)
-    private let updateChannelPopup = NSPopUpButton(frame: .zero, pullsDown: false)
-    private let additionalTagCheckbox = NSButton(checkboxWithTitle: "启用额外标签", target: nil, action: nil)
+    private var updateTagCheckboxes: [NSButton] = []
     private let checkUpdatesButton = NSButton(title: "立即检查", target: nil, action: nil)
     private let checkResultLabel = NSTextField(wrappingLabelWithString: "")
     private let downloadUpdateButton = NSButton(title: "下载", target: nil, action: nil)
@@ -104,7 +103,6 @@ final class SettingsViewController: NSViewController {
         runtimePopup.widthAnchor.constraint(equalToConstant: 160).isActive = true
         registryPopup.widthAnchor.constraint(equalToConstant: 160).isActive = true
         updateIntervalPopup.widthAnchor.constraint(equalToConstant: 160).isActive = true
-        updateChannelPopup.widthAnchor.constraint(equalToConstant: 100).isActive = true
         portField.stringValue = String(settings.port)
         portField.alignment = .left
         portField.widthAnchor.constraint(equalToConstant: 110).isActive = true
@@ -113,13 +111,14 @@ final class SettingsViewController: NSViewController {
         registryPopup.selectItem(at: PackageRegistry.allCases.firstIndex(of: settings.registry) ?? 0)
         updateIntervalPopup.addItems(withTitles: DSHUpdateCheckInterval.allCases.map(\.displayName))
         updateIntervalPopup.selectItem(at: DSHUpdateCheckInterval.allCases.firstIndex(of: settings.updateCheckInterval) ?? 0)
-        updateChannelPopup.addItems(withTitles: DSHUpdateChannel.allCases.map(\.displayName))
-        updateChannelPopup.selectItem(at: DSHUpdateChannel.allCases.firstIndex(of: settings.updateChannel) ?? 0)
-        updateChannelPopup.isEnabled = settings.additionalUpdateTagEnabled
-        updateChannelPopup.toolTip = "启用后会与 latest 一同检查，用于发现预发布版本。"
-        additionalTagCheckbox.state = settings.additionalUpdateTagEnabled ? .on : .off
-        additionalTagCheckbox.target = self
-        additionalTagCheckbox.action = #selector(additionalTagEnabledChanged)
+        registryPopup.target = self
+        registryPopup.action = #selector(registryChanged)
+        updateTagCheckboxes = (["latest"] + DSHUpdateChannel.allCases.map(\.rawValue)).map { tag in
+            let checkbox = NSButton(checkboxWithTitle: tag, target: self, action: #selector(updateTagsChanged))
+            checkbox.state = settings.updateTags.contains(tag) ? .on : .off
+            checkbox.isEnabled = tag != "latest"
+            return checkbox
+        }
         dshMarketCheckbox.tag = 0
         workspaceDrop2AddCheckbox.tag = 1
         dshMarketCheckbox.target = self
@@ -165,7 +164,7 @@ final class SettingsViewController: NSViewController {
         updateControls.orientation = .vertical
         updateControls.alignment = .leading
         updateControls.spacing = 8
-        let additionalTagControls = NSStackView(views: [additionalTagCheckbox, updateChannelPopup])
+        let additionalTagControls = NSStackView(views: updateTagCheckboxes)
         additionalTagControls.orientation = .horizontal
         additionalTagControls.alignment = .centerY
         additionalTagControls.spacing = 8
@@ -176,7 +175,7 @@ final class SettingsViewController: NSViewController {
             makeRow(label: "运行端口", value: portField),
             makeRow(label: "DSH 版本", value: runtimeControls),
             makeRow(label: "DSH 更新", value: updateControls),
-            makeRow(label: "预发布更新", value: additionalTagControls),
+            makeRow(label: "DSH 检查标签", value: additionalTagControls),
             makeRow(label: "包下载镜像", value: registryPopup),
             makeDivider(),
             makeRow(label: "推荐插件", value: pluginControls()),
@@ -272,16 +271,9 @@ final class SettingsViewController: NSViewController {
     }
 
     @objc private func applyAndRestart() {
-        let index = registryPopup.indexOfSelectedItem
-        guard PackageRegistry.allCases.indices.contains(index) else { return }
-        let registry = PackageRegistry.allCases[index]
         let updateIndex = updateIntervalPopup.indexOfSelectedItem
         guard DSHUpdateCheckInterval.allCases.indices.contains(updateIndex) else { return }
         let updateInterval = DSHUpdateCheckInterval.allCases[updateIndex]
-        let channelIndex = updateChannelPopup.indexOfSelectedItem
-        guard DSHUpdateChannel.allCases.indices.contains(channelIndex) else { return }
-        let updateChannel = DSHUpdateChannel.allCases[channelIndex]
-        let additionalTagEnabled = additionalTagCheckbox.state == .on
         guard let port = Int(portField.stringValue), (1...65_535).contains(port) else {
             let alert = NSAlert()
             alert.messageText = "端口无效"
@@ -295,19 +287,22 @@ final class SettingsViewController: NSViewController {
             RecommendedDSHPlugin.dshMarket: dshMarketCheckbox.state == .on,
             .workspaceDrop2Add: workspaceDrop2AddCheckbox.state == .on,
         ]
-        settings.registry = registry
         settings.selectedRuntimeVersion = version
         settings.port = port
         settings.updateCheckInterval = updateInterval
-        settings.updateChannel = updateChannel
-        settings.additionalUpdateTagEnabled = additionalTagEnabled
         view.window?.performClose(nil)
         pendingRecommendedPluginSelections = nil
         onApply(version, restartRequired, pluginSelections)
     }
 
-    @objc private func additionalTagEnabledChanged() {
-        updateChannelPopup.isEnabled = additionalTagCheckbox.state == .on
+    @objc private func registryChanged() {
+        let index = registryPopup.indexOfSelectedItem
+        guard PackageRegistry.allCases.indices.contains(index) else { return }
+        settings.registry = PackageRegistry.allCases[index]
+    }
+
+    @objc private func updateTagsChanged() {
+        settings.updateTags = updateTagCheckboxes.filter { $0.state == .on }.map(\.title)
     }
 
     @objc private func openVersionsDirectory() {

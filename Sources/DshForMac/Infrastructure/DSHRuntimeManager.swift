@@ -821,10 +821,7 @@ final class DSHRuntimeManager {
         npmURL: URL,
         environment: [String: String]
     ) async throws -> (release: DSHRelease, unavailableTags: [String]) {
-        let additionalTag = settings.additionalUpdateTagEnabled
-            ? settings.updateChannel.additionalTag
-            : nil
-        let tags = ["latest", additionalTag].compactMap { $0 }
+        let tags = settings.updateTags
         var releases = [DSHRelease]()
         var unavailableTags = [String]()
 
