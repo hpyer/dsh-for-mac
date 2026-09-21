@@ -16,6 +16,39 @@
 - 设置中可一键启用或禁用推荐插件：已安装的 DSH Market 会自动识别；启用“拖入文件夹添加工作区”后，Finder 文件夹拖到左侧栏会创建 DSH 工作区，右侧仍按 DSH 原逻辑添加对话附件。
 - ~~可在应用右侧只读预览 DSH 产出的文本、Markdown、图片和 SVG 文件。~~ `DSH 0.1.5-alpha.1` 开始已经内置右侧预览窗口，此功能不再迭代，只留作兼容旧聊天内的链接。等DSH正式版发布后将移除相关代码。
 
+## 界面预览
+
+点击缩略图可查看原图。
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <a href="screenshots/main.png"><img src="screenshots/main.png" alt="DshForMac 主界面" width="360"></a><br>
+      <strong>主界面</strong>
+    </td>
+    <td align="center" width="50%">
+      <a href="screenshots/folder-tree.png"><img src="screenshots/folder-tree.png" alt="工作区文件树" width="360"></a><br>
+      <strong>文件树</strong>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <a href="screenshots/terminal.png"><img src="screenshots/terminal.png" alt="终端界面" width="360"></a><br>
+      <strong>终端</strong>
+    </td>
+    <td align="center">
+      <a href="screenshots/dragdrop-to-add-workspace.png"><img src="screenshots/dragdrop-to-add-workspace.png" alt="拖入文件夹添加工作区" width="360"></a><br>
+      <strong>拖入文件夹添加工作区</strong>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" colspan="2">
+      <a href="screenshots/setting.png"><img src="screenshots/setting.png" alt="DshForMac 设置窗口" width="200"></a><br>
+      <strong>应用设置</strong>
+    </td>
+  </tr>
+</table>
+
 ## 系统要求
 
 - macOS 11 或更高版本。
