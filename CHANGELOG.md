@@ -2,6 +2,13 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 的记录方式。
 
+## [0.3.7] - 2026-09-21
+
+### 修复
+
+- 补齐 DSH 子进程的 Homebrew 与系统 PATH，并读取 `/etc/paths` 和 `/etc/paths.d`，修复从 Finder 启动后内嵌终端找不到 fnm、direnv、starship 等工具的问题。
+- 为内嵌终端增加本机 Nerd Font 图标字体回退，兼容 DSH 0.1.6-alpha.2 的提示符图标与 Powerline 分隔符；保留普通文字宽度，不自动安装或捆绑字体。
+
 ## [0.3.6] - 2026-09-18
 
 ### 调整
