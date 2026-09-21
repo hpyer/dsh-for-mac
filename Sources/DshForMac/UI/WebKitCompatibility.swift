@@ -1,6 +1,32 @@
 import Foundation
 
 enum WebKitCompatibility {
+    /// DSH 0.1.6's xterm DOM renderer names only ordinary monospace fonts.
+    /// Explicit local fallback is necessary for private-use Nerd Font symbols.
+    /// Restrict the face to symbols so ASCII keeps xterm's original cell metrics.
+    static let terminalFontScript = """
+    (() => {
+      if (document.getElementById('dsh-for-mac-terminal-font')) return;
+      const style = document.createElement('style');
+      style.id = 'dsh-for-mac-terminal-font';
+      style.textContent = `
+        @font-face {
+          font-family: "DshForMac Terminal Symbols";
+          src: local("MesloLGS NF Regular"), local("MesloLGS NF"),
+               local("MesloLGS Nerd Font Mono"), local("MesloLGM Nerd Font Mono"),
+               local("JetBrainsMono Nerd Font Mono"), local("FiraCode Nerd Font Mono"),
+               local("Hack Nerd Font Mono"), local("Symbols Nerd Font Mono");
+          unicode-range: U+E000-F8FF, U+F0000-FFFFD, U+100000-10FFFD;
+        }
+        .xterm .xterm-rows {
+          font-family: "DshForMac Terminal Symbols", ui-monospace, SFMono-Regular,
+                       Menlo, Consolas, monospace !important;
+        }
+      `;
+      (document.head || document.documentElement).appendChild(style);
+    })();
+    """
+
     /// Supplies Web APIs used by recent DSH web releases but absent from the
     /// WebKit shipped with older supported macOS versions (for example, macOS 13).
     static let script = """

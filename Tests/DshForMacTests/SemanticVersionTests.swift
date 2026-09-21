@@ -38,10 +38,24 @@ struct SemanticVersionTests {
             architecture: "arm64"
         )
 
-        #expect(
-            DSHRuntimeManager.processPath(for: runtime, basePath: "/usr/bin:/bin")
-                == "/opt/homebrew/bin:/Users/example/.local/share/pnpm:/usr/bin:/bin"
-        )
+        for basePath: String? in [nil, "", "/usr/bin:/bin", "/custom/bin:/usr/local/bin:/custom/bin"] {
+            let directories = DSHRuntimeManager.processPath(
+                for: runtime, basePath: basePath,
+                systemDirectories: ["/usr/bin", "/Library/Apple/usr/bin", "/custom/system/bin"]
+            )
+                .split(separator: ":").map(String.init)
+            #expect(Array(directories.prefix(2)) == ["/opt/homebrew/bin", "/Users/example/.local/share/pnpm"])
+            #expect(Set(directories).count == directories.count)
+            #expect(directories.contains("/Library/Apple/usr/bin"))
+            #expect(directories.contains("/custom/system/bin"))
+            for required in ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin", "/usr/local/sbin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"] {
+                #expect(directories.contains(required))
+            }
+            if basePath?.contains("/custom/bin") == true {
+                #expect(directories[2] == "/custom/bin")
+                #expect(directories[3] == "/usr/local/bin")
+            }
+        }
     }
 
     @Test func parsesNodeStyleVersion() throws {

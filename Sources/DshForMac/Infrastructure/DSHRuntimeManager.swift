@@ -559,17 +559,26 @@ final class DSHRuntimeManager {
         return environment
     }
 
-    /// Finder-launched apps do not inherit a user's shell PATH. Include the
-    /// detected pnpm location explicitly because DSH invokes pnpm by name when
-    /// it changes a profile's plugins.
-    nonisolated static func processPath(for runtime: NodeRuntime, basePath: String?) -> String {
+    /// Finder-launched apps do not inherit a user's shell PATH. Keep the selected
+    /// runtime first, preserve inherited entries, then supply Homebrew and system
+    /// fallbacks so DSH's interactive shells can load tools from the user's rc files.
+    nonisolated static func processPath(
+        for runtime: NodeRuntime,
+        basePath: String?,
+        systemDirectories: [String] = SystemSearchPath.directories()
+    ) -> String {
         let requiredDirectories = [
             runtime.nodeURL.deletingLastPathComponent().path,
             runtime.pnpmURL?.deletingLastPathComponent().path,
         ].compactMap { $0 }
         let existingDirectories = (basePath ?? "").split(separator: ":").map(String.init)
+        let fallbackDirectories = [
+            "/opt/homebrew/bin", "/opt/homebrew/sbin",
+            "/usr/local/bin", "/usr/local/sbin",
+            "/usr/bin", "/bin", "/usr/sbin", "/sbin",
+        ]
         var seenDirectories = Set<String>()
-        return (requiredDirectories + existingDirectories)
+        return (requiredDirectories + existingDirectories + systemDirectories + fallbackDirectories)
             .filter { seenDirectories.insert($0).inserted }
             .joined(separator: ":")
     }

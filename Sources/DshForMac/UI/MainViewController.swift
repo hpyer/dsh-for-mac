@@ -56,6 +56,13 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
             )
         )
         configuration.userContentController = contentController
+        contentController.addUserScript(
+            WKUserScript(
+                source: WebKitCompatibility.terminalFontScript,
+                injectionTime: .atDocumentEnd,
+                forMainFrameOnly: true
+            )
+        )
         let webView = WorkspaceDrop2AddWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = self
         webView.uiDelegate = self

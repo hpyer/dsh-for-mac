@@ -2,6 +2,13 @@
 
 范围与边界见 [项目约束](project-constraints.md) 与 [架构设计](architecture.md)。
 
+## 内嵌终端环境
+
+- 从 Finder 启动，Node 位于版本管理器目录、fnm/direnv/starship 位于 Homebrew 目录时，打开 DSH 右侧 zsh 终端应正常加载个性化配置，不出现这些工具的 `command not found`。
+- PATH 回归测试覆盖空路径、Finder 精简路径、继承自定义路径、去重和选定 Node/pnpm 优先级，位于 `Tests/DshForMacTests/SemanticVersionTests.swift`。
+- 系统 PATH 测试覆盖 `/etc/paths`、按文件名排序的 `paths.d`、缺失文件和无效条目；已继承路径和选定 Node/pnpm 优先级不被系统条目覆盖。
+- 安装 MesloLGS NF 后，内嵌终端应显示提示符的 Nerd Font 图标与 Powerline 分隔符；WebKit 测试验证字体可加载、普通字符宽度不变且不影响终端以外的文本。实际 DSH 界面仍需随版本升级人工复验。
+
 ## DSH 更新检查与下载
 
 - 设置中的“DSH 检查标签”支持多选，首项 `latest` 默认勾选且不可取消；检查标签与包下载镜像修改后立即保存，后续检查和下载直接使用新设置，无需先点击“保存”。
