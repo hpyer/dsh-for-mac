@@ -152,17 +152,24 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
         item.button?.toolTip = "DshForMac"
 
         let menu = NSMenu()
-        let showItem = NSMenuItem(title: "显示主窗口", action: #selector(showMainWindow), keyEquivalent: "")
-        showItem.target = self
-        menu.addItem(showItem)
+        menu.autoenablesItems = false
+        let versionItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        setInformationalMenuTitle("DshForMac \(AppMetadata.version)", on: versionItem)
+        menu.addItem(versionItem)
 
-        let stateItem = NSMenuItem(title: "DSH · \(serviceStatus)", action: nil, keyEquivalent: "")
-        stateItem.isEnabled = false
+        let stateItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        setInformationalMenuTitle("DSH · \(serviceStatus)", on: stateItem)
         menu.addItem(stateItem)
         statusMenuItem = stateItem
         menu.addItem(.separator())
 
-        let reloadItem = NSMenuItem(title: "重新加载 DSH 页面", action: #selector(reloadDeepSeekHarness), keyEquivalent: "")
+        let showItem = NSMenuItem(title: "显示主窗口", action: #selector(showMainWindow), keyEquivalent: "0")
+        showItem.keyEquivalentModifierMask = .command
+        showItem.target = self
+        menu.addItem(showItem)
+
+        let reloadItem = NSMenuItem(title: "重新加载 DSH 页面", action: #selector(reloadDeepSeekHarness), keyEquivalent: "r")
+        reloadItem.keyEquivalentModifierMask = .command
         reloadItem.target = self
         reloadItem.isEnabled = isServiceRunning
         menu.addItem(reloadItem)
@@ -176,6 +183,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
         restartItem.keyEquivalentModifierMask = [.command, .shift]
         restartItem.target = self
         menu.addItem(restartItem)
+
+        let settingsItem = NSMenuItem(title: "设置…", action: #selector(showSettings), keyEquivalent: ",")
+        settingsItem.keyEquivalentModifierMask = .command
+        settingsItem.target = self
+        menu.addItem(settingsItem)
+        menu.addItem(.separator())
 
         let checkDSHUpdatesItem = NSMenuItem(
             title: "检查 DSH 更新…",
@@ -194,24 +207,19 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
         menu.addItem(checkAppUpdatesItem)
         menu.addItem(.separator())
 
-        let settingsItem = NSMenuItem(title: "设置…", action: #selector(showSettings), keyEquivalent: "")
-        settingsItem.target = self
-        menu.addItem(settingsItem)
-
-        let versionItem = NSMenuItem(
-            title: "DshForMac \(AppMetadata.version)",
-            action: nil,
-            keyEquivalent: ""
-        )
-        versionItem.isEnabled = false
-        menu.addItem(versionItem)
-        menu.addItem(.separator())
-
         let quitItem = NSMenuItem(title: "退出 DshForMac", action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
         item.menu = menu
         statusItem = item
+    }
+
+    private func setInformationalMenuTitle(_ title: String, on item: NSMenuItem) {
+        item.attributedTitle = NSAttributedString(
+            string: title,
+            attributes: [.foregroundColor: NSColor.secondaryLabelColor]
+        )
+        item.isEnabled = true
     }
 
     private func configureMainMenu() {
@@ -295,6 +303,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
 
         let windowMenuItem = NSMenuItem()
         let windowMenu = NSMenu(title: "窗口")
+        let showWindowItem = NSMenuItem(title: "显示主窗口", action: #selector(showMainWindow), keyEquivalent: "0")
+        showWindowItem.target = self
+        windowMenu.addItem(showWindowItem)
+        windowMenu.addItem(.separator())
         windowMenu.addItem(NSMenuItem(title: "最小化", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m"))
         windowMenu.addItem(NSMenuItem(title: "缩放", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: ""))
         windowMenuItem.submenu = windowMenu
@@ -322,7 +334,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
     private func updateServiceStatus(_ status: String, isRunning: Bool) {
         serviceStatus = status
         isServiceRunning = isRunning
-        statusMenuItem?.title = "DSH · \(status)"
+        if let statusMenuItem {
+            setInformationalMenuTitle("DSH · \(status)", on: statusMenuItem)
+        }
         reloadStatusMenuItem?.isEnabled = isRunning
         serviceIndicator.title = status
         serviceIndicator.image = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: nil)
