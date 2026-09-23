@@ -15,6 +15,7 @@ DshForMac AppKit 应用
   ├─ SettingsViewController：端口、镜像、版本、更新频率与推荐插件设置
   ├─ NodeRuntimeDetector：定位 node/npm/npx/pnpm/corepack，验证版本与架构
   ├─ DSHRuntimeManager：下载、校验、启动、健康检查、版本回收与进程停止
+  ├─ AppUpdateController：独立检查 DshForMac 发布版本并协调应用内替换与重启
   └─ FilePreviewViewController：只读文本、Markdown、图片和 SVG 预览
 
 子进程
@@ -47,6 +48,12 @@ DSH 0.1.6 的 xterm DOM 渲染器只指定普通等宽字体。WebView 在文档
 
 ## 更新检查与下载
 
+### DshForMac 应用更新
+
+应用本体通过 Sparkle 2.9.3 检查 GitHub Release 的 `appcast.xml`，使用 EdDSA 签名验证更新源和通用 DMG，保持 macOS 11 兼容。默认每 24 小时检查一次；下载和安装由用户在更新提示中选择。设置页版本号旁、应用菜单和系统菜单栏均可手动检查。检查和安装不依赖 Node.js 或 DSH；应用退出时仍由现有生命周期代码停止受管 DSH 子进程。失败后显示原因，提供重试和 GitHub Releases 入口；签名验证失败不会自动安装。源码运行不启动更新器。
+
+### DSH 运行时更新
+
 - `MainViewController` 在首次成功启动 DSH 后进行启动检查。应用持续运行时，每分钟判断每天、每周、每月检查是否到期；应用重新激活、Dock 重新打开和系统唤醒时也判断一次。所有触发共用最后成功检查时间；“每次启动”不参与后台定时检查，“不检查”仅允许手动检查。
 - 自动检查失败后至少等待 15 分钟再重试；检查与下载不能重复或同时发起。保存检查间隔后按新的设置判断是否到期，无需重启应用。
 - `DSHRuntimeManager.checkForUpdates` 不执行安装、不修复未完成的安装，也不启用包管理器。`downloadVersion` 在用户点击后按精确版本重新读取元数据，再使用独立目录下载；使用 pnpm 时写入临时 `pnpm-workspace.yaml`，显式允许 DSH 依赖所需的构建脚本，然后构建待处理依赖并在存在时显式重建 `fs-ext`，最后校验安装。首次运行与用户主动重新下载仍通过启动流程安装必要运行时。
@@ -64,12 +71,14 @@ DSH 0.1.6 的 xterm DOM 渲染器只指定普通等宽字体。WebView 在文档
     current -> versions/<version>  # 最近一次健康检查成功的版本
 ```
 
+应用标识为 `cn.hpyer.dshformac`。首次以此标识启动时，应用会将旧标识下的偏好设置复制到新域，保留新域中已有的值；旧域不删除。受管运行时目录和 DSH 自身数据路径不受标识变更影响。
+
 界面设置由 macOS `UserDefaults` 保存，包括：
 
 - 设置中的“DSH 检查标签”支持多选，首项 `latest` 默认勾选且不可取消；检查标签与包下载镜像修改后立即保存，后续检查和下载直接使用新设置，无需先点击“保存”。
 - 包下载镜像：腾讯云镜像（默认）、npmmirror、Yarn 镜像或 npm 官方源；仅注入 DshForMac 子进程环境变量，不会修改用户全局 npm/pnpm 配置。
 - DSH 版本选择与已安装版本目录。
-- 更新检查频率：每次启动、每天、每周、每月或不检查；也可手动立即检查。`latest` 始终参与检查；用户可多选 `alpha`、`beta`、`next` 作为额外检查标签。某一标签无法解析时，其他可用标签仍会作为候选，并在结果中提示。检查仅解析版本元数据和读取本地校验信息，发现比当前运行版本更新的版本后立即显示工具栏提示；设置中的状态说明会询问是否下载，只有点击链接样式的“下载”按钮才下载和校验该精确版本。下载完成后可在版本列表中选择，不会替换运行中的服务。
+- DSH 更新检查频率：每次启动、每天、每周、每月或不检查；也可手动点击“检查 DSH 更新”。`latest` 始终参与检查；用户可多选 `alpha`、`beta`、`next` 作为额外检查标签。某一标签无法解析时，其他可用标签仍会作为候选，并在结果中提示。检查仅解析版本元数据和读取本地校验信息，发现比当前运行版本更新的版本后立即显示“有新 DSH 版本”工具栏提示；设置中的状态说明会询问是否下载，只有点击链接样式的“下载”按钮才下载和校验该精确版本。下载完成后可在版本列表中选择，不会替换运行中的服务。
 - 服务端口：1–65535，默认 3080。
 - 用户手动选择的 Node.js 路径。
 - 推荐插件：设置中的勾选项直接读取和修改 DSH 默认 `web` profile。`dshmarket` 如果原本就在该 profile 中，会自动显示为已启用；`dsh-workspace-drop2add` 的安装源随 DshForMac 应用包提供。启动时会将该插件的旧本地 link（含旧包名）迁移到当前应用包内的资源，但不会覆盖用户自行从 registry 安装的同名包。变更后会重启 DSH 才生效，DshForMac 不维护第二份插件启用状态。
@@ -93,4 +102,4 @@ dist/DshForMac-x.y.z-unsigned.dmg
 
 脚本不会覆盖同名已有产物；需要重新打包时应先改版本号或手动处理旧产物。
 
-GitHub Actions 的标签发布流程则在 Intel 与 Apple Silicon Runner 上分别构建和打包，发布两个架构专用 DMG，不合并为通用文件。
+GitHub Actions 的标签发布流程在 Intel 与 Apple Silicon Runner 上分别构建和测试，随后合成并验证一个通用 DMG。Sparkle 工具使用仓库 `SPARKLE_PRIVATE_KEY` 密钥生成签名 appcast；工作流先创建草稿 Release，上传通用 DMG 与 `appcast.xml` 后公开。应用从固定的 GitHub `releases/latest/download/appcast.xml` 地址读取稳定版更新源，不调用 Releases API。`CFBundleVersion` 随发布递增；应用仍以未经过 Apple 签名和公证的形式发布。
