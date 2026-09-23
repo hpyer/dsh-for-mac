@@ -80,11 +80,19 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
             defer: false
         )
         window.title = "DeepSeek Harness for Mac"
-        window.center()
         window.contentViewController = contentViewController
         window.setContentSize(initialContentSize)
         window.contentMinSize = NSSize(width: 390, height: 360)
         window.styleMask.insert(.resizable)
+        let frameName: NSWindow.FrameAutosaveName = "DshForMacMainWindow"
+        let hadSavedFrame = window.setFrameUsingName(frameName)
+        window.setFrameAutosaveName(frameName)
+        if !hadSavedFrame || !NSScreen.screens.contains(where: { screen in
+            let visibleArea = screen.visibleFrame.intersection(window.frame)
+            return visibleArea.width >= 200 && visibleArea.height >= 120
+        }) {
+            window.center()
+        }
         configureToolbar(for: window)
 
         windowController = NSWindowController(window: window)
