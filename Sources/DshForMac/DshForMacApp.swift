@@ -23,6 +23,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
     private let updateAvailableIndicator = NSButton(title: "有新 DSH 版本", target: nil, action: nil)
     private weak var mainToolbar: NSToolbar?
     private var statusItem: NSStatusItem?
+    private var statusMenuItem: NSMenuItem?
+    private var reloadStatusMenuItem: NSMenuItem?
     private var serviceStatus = "正在启动 DSH…"
     private var isServiceRunning = false
     private var updateCheckStatus = ""
@@ -97,9 +99,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         mainViewController?.checkScheduledUpdates()
-        guard !flag, let window = windowController?.window else { return true }
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        showMainWindow()
         return true
     }
 
@@ -144,6 +144,22 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
         item.button?.toolTip = "DshForMac"
 
         let menu = NSMenu()
+        let showItem = NSMenuItem(title: "显示主窗口", action: #selector(showMainWindow), keyEquivalent: "")
+        showItem.target = self
+        menu.addItem(showItem)
+
+        let stateItem = NSMenuItem(title: "DSH · \(serviceStatus)", action: nil, keyEquivalent: "")
+        stateItem.isEnabled = false
+        menu.addItem(stateItem)
+        statusMenuItem = stateItem
+        menu.addItem(.separator())
+
+        let reloadItem = NSMenuItem(title: "重新加载 DSH 页面", action: #selector(reloadDeepSeekHarness), keyEquivalent: "")
+        reloadItem.target = self
+        reloadItem.isEnabled = isServiceRunning
+        menu.addItem(reloadItem)
+        reloadStatusMenuItem = reloadItem
+
         let restartItem = NSMenuItem(
             title: "一键重启 DSH",
             action: #selector(restartDeepSeekHarness),
@@ -153,6 +169,14 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
         restartItem.target = self
         menu.addItem(restartItem)
 
+        let checkDSHUpdatesItem = NSMenuItem(
+            title: "检查 DSH 更新…",
+            action: #selector(checkForDSHUpdates),
+            keyEquivalent: ""
+        )
+        checkDSHUpdatesItem.target = self
+        menu.addItem(checkDSHUpdatesItem)
+
         let checkAppUpdatesItem = NSMenuItem(
             title: "检查 DshForMac 更新…",
             action: #selector(checkForAppUpdates),
@@ -160,6 +184,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
         )
         checkAppUpdatesItem.target = self
         menu.addItem(checkAppUpdatesItem)
+        menu.addItem(.separator())
+
+        let settingsItem = NSMenuItem(title: "设置…", action: #selector(showSettings), keyEquivalent: "")
+        settingsItem.target = self
+        menu.addItem(settingsItem)
 
         let versionItem = NSMenuItem(
             title: "DshForMac \(AppMetadata.version)",
@@ -285,6 +314,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
     private func updateServiceStatus(_ status: String, isRunning: Bool) {
         serviceStatus = status
         isServiceRunning = isRunning
+        statusMenuItem?.title = "DSH · \(status)"
+        reloadStatusMenuItem?.isEnabled = isRunning
         serviceIndicator.title = status
         serviceIndicator.image = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: nil)
         serviceIndicator.contentTintColor = status.contains("失败") ? .systemRed : (isRunning ? .systemGreen : .systemOrange)
@@ -365,8 +396,20 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
         mainViewController?.restartDeepSeekHarness()
     }
 
+    @objc private func showMainWindow() {
+        guard let window = windowController?.window else { return }
+        if window.isMiniaturized { window.deminiaturize(nil) }
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
     @objc private func reloadDeepSeekHarness() {
         mainViewController?.reloadWebInterface()
+    }
+
+    @objc private func checkForDSHUpdates() {
+        showSettings()
+        mainViewController?.checkForUpdatesNow()
     }
 
     @objc private func checkForAppUpdates() {

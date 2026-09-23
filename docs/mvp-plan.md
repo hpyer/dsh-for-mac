@@ -2,6 +2,11 @@
 
 范围与边界见 [项目约束](project-constraints.md) 与 [架构设计](architecture.md)。
 
+## 菜单栏快捷入口
+
+- 关闭或最小化主窗口后，通过菜单栏“显示主窗口”可将原窗口置前；运行中的 DSH 不因关闭窗口而停止。
+- 菜单栏状态随 DSH 启动、运行、失败和退出更新；页面重载、重启、检查 DSH 更新及设置入口可用。
+
 ## 内嵌终端环境
 
 - 从 Finder 启动，Node 位于版本管理器目录、fnm/direnv/starship 位于 Homebrew 目录时，打开 DSH 右侧 zsh 终端应正常加载个性化配置，不出现这些工具的 `command not found`。

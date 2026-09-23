@@ -77,7 +77,7 @@ sudo xattr -rd com.apple.quarantine /Applications/DshForMac.app
 
 首次成功启动后，DSH 会显示在主窗口中。常用操作如下：
 
-- 在菜单栏或应用菜单选择“一键重启 DSH”，重启当前 DSH 版本。
+- 菜单栏可显示主窗口、查看 DSH 状态、重新加载页面、重启 DSH、检查 DSH 更新或打开设置；关闭主窗口后，DSH 服务继续运行。
 - 在设置中的 DshForMac 版本号旁，或菜单栏中选择“检查 DshForMac 更新”。应用自动检查每天至多一次，安装前由用户确认；若自动安装失败，可从设置打开 [GitHub 发布页面](https://github.com/hpyer/dsh-for-mac/releases)手动下载。请先将应用从 DMG 拖入“应用程序”，不要直接从 DMG 运行。
 - 通过“设置…”修改服务端口、下载镜像、DSH 版本和 DSH 更新检查频率；`latest` 始终检查，勾选启用后可额外选择 alpha、beta 或 next 标签。可打开已安装版本目录或点击“检查 DSH 更新”。每天、每周和每月检查在应用持续运行时也会到期触发；发现 DSH 新版本后工具栏立即提示，在设置的状态说明旁点击“下载”才会下载更新。
 - 在“设置 → 推荐插件”中启用或禁用 DSH Market 与“拖入文件夹添加工作区”；变更会写入 DSH 的 web profile 并自动重启 DSH。
