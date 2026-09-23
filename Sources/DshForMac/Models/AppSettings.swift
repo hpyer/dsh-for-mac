@@ -77,6 +77,29 @@ enum DSHUpdateChannel: String, CaseIterable, Sendable {
 final class AppSettings {
     static let shared = AppSettings()
 
+    static func migrateLegacyBundlePreferencesIfNeeded() {
+        let currentBundleIdentifier = "cn.hpyer.dshformac"
+        guard Bundle.main.bundleIdentifier == currentBundleIdentifier else { return }
+        migratePreferences(
+            in: .standard,
+            from: "com.hpyer.dshformac",
+            to: currentBundleIdentifier
+        )
+    }
+
+    static func migratePreferences(in defaults: UserDefaults, from legacyDomain: String, to currentDomain: String) {
+        let migrationKey = "dshForMacMigratedLegacyBundlePreferences"
+        var current = defaults.persistentDomain(forName: currentDomain) ?? [:]
+        guard current[migrationKey] == nil,
+              let legacy = defaults.persistentDomain(forName: legacyDomain)
+        else { return }
+        for (key, value) in legacy where current[key] == nil {
+            current[key] = value
+        }
+        current[migrationKey] = true
+        defaults.setPersistentDomain(current, forName: currentDomain)
+    }
+
     private enum Key {
         static let registry = "packageRegistry"
         static let selectedRuntimeVersion = "selectedRuntimeVersion"

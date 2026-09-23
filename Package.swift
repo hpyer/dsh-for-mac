@@ -7,10 +7,17 @@ let package = Package(
     products: [
         .executable(name: "DshForMac", targets: ["DshForMac"]),
     ],
+    dependencies: [
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.3"),
+    ],
     targets: [
         .executableTarget(
             name: "DshForMac",
-            resources: [.process("Resources")]
+            dependencies: [.product(name: "Sparkle", package: "Sparkle")],
+            resources: [.process("Resources")],
+            linkerSettings: [
+                .unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"]),
+            ]
         ),
         .testTarget(name: "DshForMacTests", dependencies: ["DshForMac"]),
     ]

@@ -10,6 +10,7 @@ OUTPUT_DIR="$ROOT_DIR/dist"
 TRAY_IMAGE="$ROOT_DIR/Sources/DshForMac/Resources/dsh-whale.png"
 DOCK_WHALE_IMAGE="$ROOT_DIR/Sources/DshForMac/Resources/dsh-whale-dock.png"
 INFO_PLIST="$ROOT_DIR/Packaging/Info.plist"
+SPARKLE_FRAMEWORK="${SPARKLE_FRAMEWORK:-$ROOT_DIR/.build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework}"
 
 case "$PACKAGE_ARCH" in
   universal)
@@ -37,7 +38,7 @@ if [[ -e "$OUTPUT_DMG" ]]; then
   exit 1
 fi
 
-if [[ ! -f "$TRAY_IMAGE" || ! -f "$DOCK_WHALE_IMAGE" || ! -f "$INFO_PLIST" ]]; then
+if [[ ! -f "$TRAY_IMAGE" || ! -f "$DOCK_WHALE_IMAGE" || ! -f "$INFO_PLIST" || ! -d "$SPARKLE_FRAMEWORK" ]]; then
   print -u2 "Required packaging resource is missing."
   exit 1
 fi
@@ -96,6 +97,7 @@ RESOURCES_DIR="$CONTENTS_DIR/Resources"
 DMG_ROOT="$STAGING_DIR/dmg-root"
 
 mkdir -p "$CONTENTS_DIR/MacOS" "$RESOURCES_DIR" "$DMG_ROOT"
+mkdir -p "$CONTENTS_DIR/Frameworks"
 case "$PACKAGE_ARCH" in
   universal)
     lipo -create "$BINARY_X86_64" "$BINARY_ARM64" -output "$CONTENTS_DIR/MacOS/$APP_NAME"
@@ -113,6 +115,7 @@ case "$PACKAGE_ARCH" in
 esac
 chmod 755 "$CONTENTS_DIR/MacOS/$APP_NAME"
 install -m 644 "$INFO_PLIST" "$CONTENTS_DIR/Info.plist"
+ditto "$SPARKLE_FRAMEWORK" "$CONTENTS_DIR/Frameworks/Sparkle.framework"
 ditto "$RESOURCE_BUNDLE" "$RESOURCES_DIR/${APP_NAME}_${APP_NAME}.bundle"
 install -m 644 "$TRAY_IMAGE" "$RESOURCES_DIR/dsh-whale.png"
 install -m 644 "$DOCK_WHALE_IMAGE" "$RESOURCES_DIR/dsh-whale-dock.png"
@@ -126,6 +129,8 @@ if [[ ! -f "$RESOURCES_DIR/dsh-whale.png" || ! -f "$RESOURCES_DIR/dsh-whale-dock
 fi
 
 plutil -lint "$CONTENTS_DIR/Info.plist" >/dev/null
+otool -L "$CONTENTS_DIR/MacOS/$APP_NAME" | grep '@rpath/Sparkle.framework/' >/dev/null
+otool -l "$CONTENTS_DIR/MacOS/$APP_NAME" | grep '@executable_path/../Frameworks' >/dev/null
 ditto "$APP_BUNDLE" "$DMG_ROOT/${APP_NAME}.app"
 ln -s /Applications "$DMG_ROOT/Applications"
 

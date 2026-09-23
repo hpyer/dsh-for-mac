@@ -705,7 +705,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
         let updateTags = AppSettings.shared.updateTags
         isCheckingForUpdates = true
         lastUpdateCheckAttempt = Date()
-        onUpdateCheckStatusChanged?("正在检查更新…")
+        onUpdateCheckStatusChanged?("正在检查 DSH 更新…")
         Task { [weak self] in
             guard let self else { return }
             do {
@@ -730,11 +730,11 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
                     : "（未能检查 \(result.unavailableTags.joined(separator: "、"))）"
                 let message: String
                 if AppSettings.shared.availableUpdateVersion == nil {
-                    message = "当前已是最新版本。\(unavailableSuffix)"
+                    message = "DSH 已是最新版本。\(unavailableSuffix)"
                 } else if result.isInstalled {
-                    message = "新版本 \(result.version) 已下载。\(unavailableSuffix)"
+                    message = "DSH 新版本 \(result.version) 已下载。\(unavailableSuffix)"
                 } else {
-                    message = "发现新版本 \(result.version)，是否下载？\(unavailableSuffix)"
+                    message = "发现 DSH 新版本 \(result.version)，是否下载？\(unavailableSuffix)"
                 }
                 self.isCheckingForUpdates = false
                 self.onUpdateCheckStatusChanged?(message)
@@ -761,7 +761,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
                     AppSettings.shared.availableUpdateIsDownloaded = true
                 }
                 self.isDownloadingUpdate = false
-                self.onUpdateCheckStatusChanged?("新版本 \(version) 已下载，可在 DSH 版本中选择。")
+                self.onUpdateCheckStatusChanged?("DSH 新版本 \(version) 已下载，可在 DSH 版本中选择。")
             } catch {
                 AppSettings.shared.availableUpdateIsDownloaded = false
                 self.isDownloadingUpdate = false
@@ -791,7 +791,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
         }
         recordAvailableUpdateVersion(availableVersion)
         if AppSettings.shared.availableUpdateVersion == nil {
-            onUpdateCheckStatusChanged?("当前已是最新版本。")
+            onUpdateCheckStatusChanged?("DSH 已是最新版本。")
         }
     }
 

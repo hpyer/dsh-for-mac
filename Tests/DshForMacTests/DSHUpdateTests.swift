@@ -5,6 +5,33 @@ import Testing
 
 @MainActor
 struct DSHUpdateTests {
+    @Test func bundleIdentifierMigrationPreservesExistingPreferencesAndRunsOnce() {
+        let legacyDomain = "DshForMacTests.legacy.\(UUID().uuidString)"
+        let currentDomain = "DshForMacTests.current.\(UUID().uuidString)"
+        let defaults = UserDefaults.standard
+        defer {
+            defaults.removePersistentDomain(forName: legacyDomain)
+            defaults.removePersistentDomain(forName: currentDomain)
+        }
+
+        defaults.setPersistentDomain(
+            ["dshPort": 4000, "packageRegistry": PackageRegistry.npm.rawValue],
+            forName: legacyDomain
+        )
+        defaults.setPersistentDomain(["dshPort": 5000], forName: currentDomain)
+        AppSettings.migratePreferences(in: defaults, from: legacyDomain, to: currentDomain)
+
+        let migrated = defaults.persistentDomain(forName: currentDomain)
+        #expect(migrated?["dshPort"] as? Int == 5000)
+        #expect(migrated?["packageRegistry"] as? String == PackageRegistry.npm.rawValue)
+
+        var changed = migrated ?? [:]
+        changed.removeValue(forKey: "packageRegistry")
+        defaults.setPersistentDomain(changed, forName: currentDomain)
+        AppSettings.migratePreferences(in: defaults, from: legacyDomain, to: currentDomain)
+        #expect(defaults.persistentDomain(forName: currentDomain)?["packageRegistry"] == nil)
+    }
+
     @Test func updateTagsPreserveLegacySelectionAndAlwaysIncludeLatest() throws {
         let fixture = try Fixture()
         defer { fixture.cleanUp() }
@@ -26,6 +53,7 @@ struct DSHUpdateTests {
         defer { fixture.cleanUp() }
         var checkedTags: [String] = []
         var checkedRegistry: PackageRegistry?
+        var appCheckCount = 0
         var didApply = false
         let controller = SettingsViewController(
             settings: fixture.settings,
@@ -34,6 +62,7 @@ struct DSHUpdateTests {
                 checkedTags = fixture.settings.updateTags
                 checkedRegistry = fixture.settings.registry
             },
+            onCheckAppUpdates: { appCheckCount += 1 },
             onDownloadUpdate: {}, onOpenVersionsDirectory: {}
         )
         func descendants(_ view: NSView) -> [NSView] {
@@ -54,8 +83,13 @@ struct DSHUpdateTests {
         })
         registry.selectItem(withTitle: PackageRegistry.npm.displayName)
         registry.sendAction(registry.action, to: registry.target)
-        let check = try #require(buttons.first { $0.title == "立即检查" })
+        let appCheck = try #require(buttons.first { $0.title == "检查应用更新" })
+        appCheck.sendAction(appCheck.action, to: appCheck.target)
+        #expect(appCheckCount == 1)
+        #expect(checkedTags.isEmpty)
+        let check = try #require(buttons.first { $0.title == "检查 DSH 更新" })
         check.sendAction(check.action, to: check.target)
+        #expect(appCheckCount == 1)
         #expect(checkedTags == ["latest", "alpha", "beta", "next"])
         #expect(checkedRegistry == .npm)
         #expect(!didApply)

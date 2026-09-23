@@ -4,6 +4,7 @@ import AppKit
 struct DshForMacMain {
     @MainActor
     static func main() {
+        AppSettings.migrateLegacyBundlePreferencesIfNeeded()
         let application = NSApplication.shared
         application.setActivationPolicy(.regular)
 
@@ -19,7 +20,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
     private var settingsWindowController: NSWindowController?
     private weak var mainViewController: MainViewController?
     private let serviceIndicator = NSButton(title: "正在启动", target: nil, action: nil)
-    private let updateAvailableIndicator = NSButton(title: "有新版本", target: nil, action: nil)
+    private let updateAvailableIndicator = NSButton(title: "有新 DSH 版本", target: nil, action: nil)
     private weak var mainToolbar: NSToolbar?
     private var statusItem: NSStatusItem?
     private var serviceStatus = "正在启动 DSH…"
@@ -27,6 +28,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
     private var updateCheckStatus = ""
     private var recommendedPluginStatus = ""
     private var isRecommendedPluginOperationInProgress = false
+    private let appUpdateController = AppUpdateController()
+    private var appUpdateStatus = ""
 
     private enum ToolbarIdentifier {
         static let updateAvailable = NSToolbarItem.Identifier("updateAvailable")
@@ -37,6 +40,16 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.applicationIconImage = AppIcon.image()
+        appUpdateController.onStatusChanged = { [weak self] status in
+            self?.appUpdateStatus = status
+            self?.refreshAppUpdateSettings()
+        }
+        appUpdateController.onFailure = { [weak self] reason, canRetry in
+            self?.showAppUpdateFailure(reason: reason, canRetry: canRetry)
+        }
+        appUpdateController.onAvailabilityChanged = { [weak self] in
+            self?.refreshAppUpdateSettings()
+        }
         configureMainMenu()
         configureStatusItem()
 
@@ -75,6 +88,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
         windowController = NSWindowController(window: window)
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        appUpdateController.start()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -102,7 +116,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
         updateAvailableIndicator.isBordered = false
         updateAvailableIndicator.image = NSImage(
             systemSymbolName: "arrow.down.circle.fill",
-            accessibilityDescription: "有新版本"
+            accessibilityDescription: "有新 DSH 版本"
         )
         updateAvailableIndicator.imagePosition = .imageLeading
         updateAvailableIndicator.contentTintColor = .systemBlue
@@ -139,6 +153,14 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
         restartItem.target = self
         menu.addItem(restartItem)
 
+        let checkAppUpdatesItem = NSMenuItem(
+            title: "检查 DshForMac 更新…",
+            action: #selector(checkForAppUpdates),
+            keyEquivalent: ""
+        )
+        checkAppUpdatesItem.target = self
+        menu.addItem(checkAppUpdatesItem)
+
         let versionItem = NSMenuItem(
             title: "DshForMac \(AppMetadata.version)",
             action: nil,
@@ -163,6 +185,13 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
         let settingsItem = NSMenuItem(title: "设置…", action: #selector(showSettings), keyEquivalent: ",")
         settingsItem.target = self
         applicationMenu.addItem(settingsItem)
+        let checkAppUpdatesItem = NSMenuItem(
+            title: "检查 DshForMac 更新…",
+            action: #selector(checkForAppUpdates),
+            keyEquivalent: ""
+        )
+        checkAppUpdatesItem.target = self
+        applicationMenu.addItem(checkAppUpdatesItem)
         applicationMenu.addItem(.separator())
         let restartItem = NSMenuItem(title: "一键重启 DSH", action: #selector(restartDeepSeekHarness), keyEquivalent: "r")
         restartItem.keyEquivalentModifierMask = [.command, .shift]
@@ -303,10 +332,18 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
             pluginStatus: recommendedPluginStatus,
             isPluginOperationInProgress: isRecommendedPluginOperationInProgress
         )
+        refreshAppUpdateSettings()
+    }
+
+    private func refreshAppUpdateSettings() {
+        (settingsWindowController?.contentViewController as? SettingsViewController)?.updateAppUpdate(
+            status: appUpdateStatus,
+            canCheck: appUpdateController.canCheckForUpdates
+        )
     }
 
     private func updateAvailableUpdateIndicator(version: String?) {
-        updateAvailableIndicator.toolTip = version.map { "发现新版本 \($0)，点击查看设置" }
+        updateAvailableIndicator.toolTip = version.map { "发现新 DSH 版本 \($0)，点击查看设置" }
         guard let mainToolbar else { return }
 
         if version != nil {
@@ -332,6 +369,26 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
         mainViewController?.reloadWebInterface()
     }
 
+    @objc private func checkForAppUpdates() {
+        appUpdateController.checkForUpdates()
+        refreshAppUpdateSettings()
+    }
+
+    private func showAppUpdateFailure(reason: String, canRetry: Bool) {
+        let alert = NSAlert()
+        alert.messageText = "DshForMac 更新失败"
+        alert.informativeText = "\(reason)\n可以稍后重试，或前往 GitHub 发布页面手动下载安装。"
+        if canRetry { alert.addButton(withTitle: "重试") }
+        alert.addButton(withTitle: "打开发布页面")
+        alert.addButton(withTitle: "关闭")
+        let response = alert.runModal()
+        if canRetry && response == .alertFirstButtonReturn {
+            DispatchQueue.main.async { [weak self] in self?.checkForAppUpdates() }
+        } else if response == (canRetry ? .alertSecondButtonReturn : .alertFirstButtonReturn) {
+            NSWorkspace.shared.open(AppUpdateController.releasesURL)
+        }
+    }
+
     @objc private func showSettings() {
         if settingsWindowController == nil {
             let settingsViewController = SettingsViewController(
@@ -345,6 +402,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
                 onCheckUpdates: { [weak self] in
                     self?.mainViewController?.checkForUpdatesNow()
                 },
+                onCheckAppUpdates: { [weak self] in
+                    self?.checkForAppUpdates()
+                },
                 onDownloadUpdate: { [weak self] in
                     self?.mainViewController?.downloadAvailableUpdate()
                 },
@@ -353,7 +413,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
                 }
             )
             let settingsWindow = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 440, height: 550),
+                contentRect: NSRect(x: 0, y: 0, width: 440, height: 610),
                 styleMask: [.titled, .closable, .miniaturizable],
                 backing: .buffered,
                 defer: false
@@ -379,6 +439,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
             pluginStatus: recommendedPluginStatus,
             isPluginOperationInProgress: isRecommendedPluginOperationInProgress
         )
+        refreshAppUpdateSettings()
         settingsWindowController?.showWindow(nil)
         settingsWindowController?.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -429,7 +490,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
         case ToolbarIdentifier.updateAvailable:
             let item = NSToolbarItem(itemIdentifier: itemIdentifier)
             item.view = updateAvailableIndicator
-            item.label = "有新版本"
+            item.label = "有新 DSH 版本"
             item.toolTip = updateAvailableIndicator.toolTip
             return item
         case ToolbarIdentifier.serviceStatus:

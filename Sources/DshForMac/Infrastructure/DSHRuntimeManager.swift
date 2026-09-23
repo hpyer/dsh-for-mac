@@ -262,7 +262,7 @@ final class DSHRuntimeManager {
         if reportsProgress {
             statusHandler("正在检查 DSH 更新…")
         }
-        updateStatusHandler?("正在检查更新…")
+        updateStatusHandler?("正在检查 DSH 更新…")
         let resolvedRelease = try await resolveUpdateRelease(npmURL: npmURL, environment: environment)
         let release = resolvedRelease.release
         let runtimeDirectory = versionsDirectory.appendingPathComponent(release.version, isDirectory: true)

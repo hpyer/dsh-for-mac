@@ -7,7 +7,10 @@ final class SettingsViewController: NSViewController {
     private let registryPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let updateIntervalPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private var updateTagCheckboxes: [NSButton] = []
-    private let checkUpdatesButton = NSButton(title: "立即检查", target: nil, action: nil)
+    private let checkUpdatesButton = NSButton(title: "检查 DSH 更新", target: nil, action: nil)
+    private let checkAppUpdatesButton = NSButton(title: "检查应用更新", target: nil, action: nil)
+    private let appUpdateStatusLabel = NSTextField(wrappingLabelWithString: "")
+    private let appReleasesButton = NSButton(title: "GitHub 发布页面", target: nil, action: nil)
     private let checkResultLabel = NSTextField(wrappingLabelWithString: "")
     private let downloadUpdateButton = NSButton(title: "下载", target: nil, action: nil)
     private let portField = NSTextField(string: "")
@@ -18,6 +21,7 @@ final class SettingsViewController: NSViewController {
     private let settings: AppSettings
     private let onApply: (String?, Bool, [RecommendedDSHPlugin: Bool]) -> Void
     private let onCheckUpdates: () -> Void
+    private let onCheckAppUpdates: () -> Void
     private let onDownloadUpdate: () -> Void
     private let onOpenVersionsDirectory: () -> Void
     private var pendingRecommendedPluginSelections: [RecommendedDSHPlugin: Bool]?
@@ -26,12 +30,14 @@ final class SettingsViewController: NSViewController {
         settings: AppSettings = .shared,
         onApply: @escaping (String?, Bool, [RecommendedDSHPlugin: Bool]) -> Void,
         onCheckUpdates: @escaping () -> Void,
+        onCheckAppUpdates: @escaping () -> Void,
         onDownloadUpdate: @escaping () -> Void,
         onOpenVersionsDirectory: @escaping () -> Void
     ) {
         self.settings = settings
         self.onApply = onApply
         self.onCheckUpdates = onCheckUpdates
+        self.onCheckAppUpdates = onCheckAppUpdates
         self.onDownloadUpdate = onDownloadUpdate
         self.onOpenVersionsDirectory = onOpenVersionsDirectory
         super.init(nibName: nil, bundle: nil)
@@ -79,7 +85,7 @@ final class SettingsViewController: NSViewController {
         var status = updateCheckStatus
         if status.isEmpty, let version = settings.availableUpdateVersion {
             status = settings.availableUpdateIsDownloaded && installedVersions.contains(version)
-                ? "新版本 \(version) 已下载。" : "发现新版本 \(version)，是否下载？"
+                ? "DSH 新版本 \(version) 已下载。" : "发现 DSH 新版本 \(version)，是否下载？"
         }
         checkResultLabel.stringValue = status
         checkResultLabel.toolTip = status
@@ -94,9 +100,26 @@ final class SettingsViewController: NSViewController {
         pendingRecommendedPluginSelections = nil
     }
 
+    func updateAppUpdate(status: String, canCheck: Bool) {
+        checkAppUpdatesButton.isEnabled = canCheck
+        appUpdateStatusLabel.stringValue = status
+        appUpdateStatusLabel.toolTip = status
+        appUpdateStatusLabel.isHidden = status.isEmpty
+    }
+
     private func configureView() {
         let appVersionValue = NSTextField(labelWithString: AppMetadata.version)
         appVersionValue.textColor = .secondaryLabelColor
+        checkAppUpdatesButton.target = self
+        checkAppUpdatesButton.action = #selector(checkAppUpdates)
+        appReleasesButton.target = self
+        appReleasesButton.action = #selector(openAppReleases)
+        appReleasesButton.isBordered = false
+        appReleasesButton.contentTintColor = .linkColor
+        appUpdateStatusLabel.textColor = .secondaryLabelColor
+        appUpdateStatusLabel.maximumNumberOfLines = 3
+        appUpdateStatusLabel.preferredMaxLayoutWidth = 250
+        appUpdateStatusLabel.isHidden = true
         statusValue.lineBreakMode = .byTruncatingMiddle
         statusValue.textColor = .secondaryLabelColor
         statusValue.maximumNumberOfLines = 1
@@ -152,6 +175,13 @@ final class SettingsViewController: NSViewController {
         let runtimeControls = NSStackView(views: [runtimePopup, openVersionsButton])
         runtimeControls.orientation = .horizontal
         runtimeControls.spacing = 8
+        let appVersionControls = NSStackView(views: [appVersionValue, checkAppUpdatesButton])
+        appVersionControls.orientation = .horizontal
+        appVersionControls.spacing = 8
+        let appUpdateControls = NSStackView(views: [appVersionControls, appUpdateStatusLabel, appReleasesButton])
+        appUpdateControls.orientation = .vertical
+        appUpdateControls.alignment = .leading
+        appUpdateControls.spacing = 5
         let updateActionControls = NSStackView(views: [updateIntervalPopup, checkUpdatesButton])
         updateActionControls.orientation = .horizontal
         updateActionControls.spacing = 8
@@ -168,9 +198,11 @@ final class SettingsViewController: NSViewController {
         additionalTagControls.orientation = .horizontal
         additionalTagControls.alignment = .centerY
         additionalTagControls.spacing = 8
+        let appRow = makeRow(label: "DshForMac", value: appUpdateControls)
+        appRow.alignment = .top
 
         let content = NSStackView(views: [
-            makeRow(label: "DshForMac", value: appVersionValue),
+            appRow,
             makeRow(label: "运行状态", value: statusValue),
             makeRow(label: "运行端口", value: portField),
             makeRow(label: "DSH 版本", value: runtimeControls),
@@ -311,6 +343,14 @@ final class SettingsViewController: NSViewController {
 
     @objc private func checkUpdates() {
         onCheckUpdates()
+    }
+
+    @objc private func checkAppUpdates() {
+        onCheckAppUpdates()
+    }
+
+    @objc private func openAppReleases() {
+        NSWorkspace.shared.open(AppUpdateController.releasesURL)
     }
 
     @objc private func downloadUpdate() {
