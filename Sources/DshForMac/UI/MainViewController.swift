@@ -49,6 +49,14 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
         )
         contentController.addUserScript(
             WKUserScript(
+                source: WebKitCompatibility.modelSelectionMouseScript,
+                injectionTime: .atDocumentStart,
+                forMainFrameOnly: true,
+                in: .page
+            )
+        )
+        contentController.addUserScript(
+            WKUserScript(
                 source: producedFilePreviewBridgeScript(),
                 injectionTime: .atDocumentStart,
                 forMainFrameOnly: true,

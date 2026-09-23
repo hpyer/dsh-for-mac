@@ -1,6 +1,24 @@
 import Foundation
 
 enum WebKitCompatibility {
+    /// DSH 0.1.6-alpha.2 focuses a row when the model menu opens. WebKit does
+    /// not focus a button on mouse-down, so its blur has a null relatedTarget;
+    /// DSH closes the menu before mouse-up can deliver the row's click.
+    /// Preventing the focus change keeps the row mounted without altering its click.
+    static let modelSelectionMouseScript = """
+    (() => {
+      const menuLabels = new Set(['模型与推理等级', 'Model and reasoning effort']);
+      document.addEventListener('mousedown', (event) => {
+        if (!(event.target instanceof Element)) return;
+        const button = event.target.closest('button');
+        const menu = button?.closest('[role="menu"]');
+        if (menu && menuLabels.has(menu.getAttribute('aria-label'))) {
+          event.preventDefault();
+        }
+      }, true);
+    })();
+    """
+
     /// DSH 0.1.6's xterm DOM renderer names only ordinary monospace fonts.
     /// Explicit local fallback is necessary for private-use Nerd Font symbols.
     /// Restrict the face to symbols so ASCII keeps xterm's original cell metrics.
