@@ -18,8 +18,9 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     private let environmentStack = NSStackView()
     private let previewContainer = NSView()
     private let webOperationOverlay = NSVisualEffectView()
-    private let webOperationLabel = NSTextField(labelWithString: "")
+    private let webOperationLabel = NSTextField(wrappingLabelWithString: "")
     private let webOperationSpinner = NSProgressIndicator()
+    private let reconnectButton = NSButton(title: "重新连接", target: nil, action: nil)
     private let previewBridgeToken = UUID().uuidString
     private var workspaceDrop2AddBridgeToken: String?
     private lazy var filePreviewViewController: FilePreviewViewController = {
@@ -102,6 +103,11 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     private var updateCheckTimer: Timer?
     private var didCheckUpdatesAtLaunch = false
     private var lastUpdateCheckAttempt: Date?
+    private var webAddress: URL?
+    private var webRecoveryTask: Task<Void, Never>?
+    private var webRecoveryIdentifier: UUID?
+    private var webRecoveryNeeded = false
+    private var failedWebLoads = 0
     var isUpdateOperationInProgress: Bool { isCheckingForUpdates || isDownloadingUpdate }
     var canDownloadUpdate: Bool {
         guard !isUpdateOperationInProgress, !isLaunchingDeepSeekHarness,
@@ -146,7 +152,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
             self, selector: #selector(checkScheduledUpdates), name: NSApplication.didBecomeActiveNotification, object: nil
         )
         NSWorkspace.shared.notificationCenter.addObserver(
-            self, selector: #selector(checkScheduledUpdates), name: NSWorkspace.didWakeNotification, object: nil
+            self, selector: #selector(handleSystemWake), name: NSWorkspace.didWakeNotification, object: nil
         )
         refreshRuntimeStatus()
     }
@@ -268,6 +274,11 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     }
 
     private func showWebInterface(at address: URL) {
+        cancelWebRecovery()
+        webAddress = address
+        webRecoveryNeeded = false
+        failedWebLoads = 0
+        hideWebOperationStatus()
         environmentStack.isHidden = true
         if webView.superview == nil {
             webView.translatesAutoresizingMaskIntoConstraints = false
@@ -304,6 +315,8 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     }
 
     private func showStartupError(_ error: Error) {
+        cancelWebRecovery()
+        webAddress = nil
         activeDSHVersion = nil
         refreshRollbackButton()
         hideWebOperationStatus()
@@ -335,6 +348,8 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
 
     private func handleUnexpectedTermination(statusCode: Int32, diagnostic: String?) {
         guard !isLaunchingDeepSeekHarness else { return }
+        cancelWebRecovery()
+        webAddress = nil
         failedDSHVersion = activeDSHVersion ?? runtimeManager.lastAttemptedVersion
         activeDSHVersion = nil
         refreshRollbackButton()
@@ -352,6 +367,8 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     }
 
     func stopDeepSeekHarness() {
+        cancelWebRecovery()
+        webAddress = nil
         runtimeManager.stop()
         hideWebOperationStatus()
         activeDSHVersion = nil
@@ -359,6 +376,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     }
 
     func stopUpdateChecks() {
+        cancelWebRecovery()
         updateCheckTimer?.invalidate()
         updateCheckTimer = nil
         NotificationCenter.default.removeObserver(self, name: NSApplication.didBecomeActiveNotification, object: nil)
@@ -610,7 +628,12 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
         webOperationSpinner.startAnimation(nil)
         webOperationLabel.font = .systemFont(ofSize: 17, weight: .semibold)
         webOperationLabel.textColor = .secondaryLabelColor
-        let content = NSStackView(views: [webOperationSpinner, webOperationLabel])
+        webOperationLabel.alignment = .center
+        webOperationLabel.preferredMaxLayoutWidth = 320
+        reconnectButton.target = self
+        reconnectButton.action = #selector(retryWebConnection)
+        reconnectButton.isHidden = true
+        let content = NSStackView(views: [webOperationSpinner, webOperationLabel, reconnectButton])
         content.orientation = .vertical
         content.alignment = .centerX
         content.spacing = 12
@@ -630,12 +653,15 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     private func showWebOperationStatus(_ status: String) {
         configureWebOperationOverlay()
         webOperationLabel.stringValue = status
+        webOperationSpinner.isHidden = false
         webOperationSpinner.startAnimation(nil)
+        reconnectButton.isHidden = true
         webOperationOverlay.isHidden = false
     }
 
     private func hideWebOperationStatus() {
         webOperationOverlay.isHidden = true
+        reconnectButton.isHidden = true
         webOperationSpinner.stopAnimation(nil)
     }
 
@@ -697,6 +723,86 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
         lastUpdateCheckAttempt = Date()
         guard case let .ready(runtime) = NodeRuntimeDetector().detect(preferredNodeURL: preferredNodeURL) else { return }
         performUpdateCheck(using: runtime)
+    }
+
+    @objc private func handleSystemWake() {
+        checkScheduledUpdates()
+        startWebRecovery()
+    }
+
+    private func cancelWebRecovery() {
+        webRecoveryTask?.cancel()
+        webRecoveryTask = nil
+        webRecoveryIdentifier = nil
+    }
+
+    private func startWebRecovery() {
+        guard activeDSHVersion != nil, !isLaunchingDeepSeekHarness,
+              webView.superview != nil, let address = webAddress else { return }
+        cancelWebRecovery()
+        let identifier = UUID()
+        webRecoveryIdentifier = identifier
+        webRecoveryTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if self.webRecoveryIdentifier == identifier {
+                    self.webRecoveryTask = nil
+                    self.webRecoveryIdentifier = nil
+                }
+            }
+            for attempt in 0..<4 {
+                if attempt > 0 {
+                    try? await Task.sleep(nanoseconds: UInt64(attempt) * 2_000_000_000)
+                }
+                guard !Task.isCancelled, self.activeDSHVersion != nil,
+                      self.webAddress == address else { return }
+                if await self.isWebServiceReachable(at: address) {
+                    guard !Task.isCancelled, self.activeDSHVersion != nil,
+                          self.webAddress == address else { return }
+                    if self.webRecoveryNeeded {
+                        self.showWebOperationStatus("正在重新连接 DSH…")
+                        if let pageURL = self.webView.url, self.isLocalDSHURL(pageURL) {
+                            self.webView.reload()
+                        } else {
+                            self.webView.load(URLRequest(url: address))
+                        }
+                    }
+                    return
+                }
+                guard !Task.isCancelled, self.activeDSHVersion != nil,
+                      self.webAddress == address else { return }
+                self.webRecoveryNeeded = true
+                self.showWebOperationStatus("DSH 连接中断，正在重试…")
+                self.reportServiceStatus("DSH 连接中断，正在重试…", isRunning: false)
+            }
+            guard !Task.isCancelled, self.activeDSHVersion != nil,
+                  self.webAddress == address else { return }
+            self.showWebConnectionFailure()
+        }
+    }
+
+    private func isWebServiceReachable(at address: URL) async -> Bool {
+        var request = URLRequest(url: address)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.timeoutInterval = 3
+        guard let (_, response) = try? await URLSession.shared.data(for: request),
+              let response = response as? HTTPURLResponse,
+              let responseURL = response.url, isLocalDSHURL(responseURL) else { return false }
+        return (200..<400).contains(response.statusCode)
+    }
+
+    private func showWebConnectionFailure() {
+        showWebOperationStatus("无法连接 DSH。可重新连接，或使用工具栏重启 DSH。")
+        webOperationSpinner.stopAnimation(nil)
+        webOperationSpinner.isHidden = true
+        reconnectButton.isHidden = false
+        reportServiceStatus("DSH 连接中断", isRunning: false)
+    }
+
+    @objc private func retryWebConnection() {
+        failedWebLoads = 0
+        webRecoveryNeeded = true
+        startWebRecovery()
     }
 
     private func performUpdateCheck(using runtime: NodeRuntime) {
@@ -1122,6 +1228,37 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation?) {
         hideWebOperationStatus()
+        if webRecoveryNeeded, let activeDSHVersion {
+            webRecoveryNeeded = false
+            failedWebLoads = 0
+            reportServiceStatus("运行中 · \(activeDSHVersion)", isRunning: true)
+        }
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        handleWebNavigationFailure(error)
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        handleWebNavigationFailure(error)
+    }
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        handleWebNavigationFailure(nil)
+    }
+
+    private func handleWebNavigationFailure(_ error: Error?) {
+        if let error = error as NSError?, error.domain == NSURLErrorDomain,
+           error.code == NSURLErrorCancelled { return }
+        guard activeDSHVersion != nil, !isLaunchingDeepSeekHarness else { return }
+        failedWebLoads += 1
+        webRecoveryNeeded = true
+        if failedWebLoads >= 2 {
+            cancelWebRecovery()
+            showWebConnectionFailure()
+        } else {
+            startWebRecovery()
+        }
     }
 
     func webView(
