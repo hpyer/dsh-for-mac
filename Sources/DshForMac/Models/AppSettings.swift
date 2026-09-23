@@ -1,7 +1,7 @@
 import Foundation
 
 enum AppMetadata {
-    static let version = "0.3.7"
+    static let version = "0.3.8"
 }
 
 enum PackageRegistry: String, CaseIterable, Sendable {
