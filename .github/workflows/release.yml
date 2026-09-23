@@ -70,11 +70,9 @@ jobs:
           - name: Intel
             runner: macos-15-intel
             arch: x86_64
-            asset_suffix: intel
           - name: Apple Silicon
             runner: macos-15
             arch: arm64
-            asset_suffix: apple-silicon
     runs-on: ${{ matrix.runner }}
 
     steps:
@@ -90,27 +88,85 @@ jobs:
       - name: 构建 release 二进制
         run: swift build -c release --arch "${{ matrix.arch }}"
 
-      - name: 生成 ${{ matrix.name }} DMG
-        id: package
-        env:
-          VERSION: ${{ needs.prepare.outputs.version }}
-          ARCH: ${{ matrix.arch }}
-          ASSET_SUFFIX: ${{ matrix.asset_suffix }}
+      - name: 打包 ${{ matrix.name }} 构建产物
         run: |
           set -euo pipefail
-          DSHFORMAC_VERSION="$VERSION" DSHFORMAC_ARCH="$ARCH" DSHFORMAC_SKIP_BUILD="1" ./scripts/package-dmg.sh
-          echo "dmg_name=DshForMac-${VERSION}-${ASSET_SUFFIX}-unsigned.dmg" >> "$GITHUB_OUTPUT"
+          arch="${{ matrix.arch }}"
+          release_dir=".build/${arch}-apple-macosx/release"
+          sparkle_dir=".build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64"
+          tar -czf "release-${arch}.tar.gz" \
+            -C "$release_dir" DshForMac DshForMac_DshForMac.bundle \
+            -C "$GITHUB_WORKSPACE/$sparkle_dir" Sparkle.framework \
+            -C "$GITHUB_WORKSPACE/.build/artifacts/sparkle/Sparkle" bin/generate_appcast
 
-      - name: 上传 ${{ matrix.name }} DMG
+      - name: 上传 ${{ matrix.name }} 构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: release-dmg-${{ matrix.arch }}
-          path: dist/${{ steps.package.outputs.dmg_name }}
+          name: release-build-${{ matrix.arch }}
+          path: release-${{ matrix.arch }}.tar.gz
+          if-no-files-found: error
+
+  package:
+    name: 生成通用安装包与更新源
+    needs: [prepare, build]
+    runs-on: macos-15
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v6
+
+      - name: 下载双架构构建产物
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-build-*
+          path: release-builds
+          merge-multiple: true
+
+      - name: 合成通用 DMG 并生成已签名更新源
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ github.ref_name }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$SPARKLE_PRIVATE_KEY" ]]; then
+            echo "缺少 SPARKLE_PRIVATE_KEY 仓库密钥，无法发布可验证的应用更新。" >&2
+            exit 1
+          fi
+          mkdir -p assembled/x86_64 assembled/arm64
+          tar -xzf release-builds/release-x86_64.tar.gz -C assembled/x86_64
+          tar -xzf release-builds/release-arm64.tar.gz -C assembled/arm64
+          DSHFORMAC_VERSION="$VERSION" DSHFORMAC_SKIP_BUILD="1" \
+            BINARY_X86_64="$PWD/assembled/x86_64/DshForMac" \
+            BINARY_ARM64="$PWD/assembled/arm64/DshForMac" \
+            RESOURCE_BUNDLE="$PWD/assembled/arm64/DshForMac_DshForMac.bundle" \
+            SPARKLE_FRAMEWORK="$PWD/assembled/arm64/Sparkle.framework" \
+            ./scripts/package-dmg.sh
+          sparkle_tool="assembled/arm64/bin/generate_appcast"
+          printf '%s' "$SPARKLE_PRIVATE_KEY" | "$sparkle_tool" \
+            --ed-key-file - \
+            --download-url-prefix "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/" \
+            --link "https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}" \
+            dist
+          test -s dist/appcast.xml
+          xmllint --noout dist/appcast.xml
+          grep -F "DshForMac-${VERSION}-unsigned.dmg" dist/appcast.xml >/dev/null
+          grep -F '<sparkle:minimumSystemVersion>11.0</sparkle:minimumSystemVersion>' dist/appcast.xml >/dev/null
+          grep -F 'sparkle:edSignature=' dist/appcast.xml >/dev/null
+          grep -F 'sparkle-signatures:' dist/appcast.xml >/dev/null
+
+      - name: 上传通用 DMG 与更新源
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-universal
+          path: |
+            dist/DshForMac-${{ needs.prepare.outputs.version }}-unsigned.dmg
+            dist/appcast.xml
           if-no-files-found: error
 
   release:
     name: 创建 GitHub Release
-    needs: [prepare, build]
+    needs: [prepare, package]
     runs-on: ubuntu-latest
 
     steps:
@@ -123,12 +179,11 @@ jobs:
           name: release-notes
           path: release-notes
 
-      - name: 下载 DMG 文件
+      - name: 下载通用 DMG 与更新源
         uses: actions/download-artifact@v4
         with:
-          pattern: release-dmg-*
+          name: release-universal
           path: release-artifact
-          merge-multiple: true
 
       - name: 确保 GitHub CLI 可用
         run: |
@@ -148,13 +203,22 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
           dmg_files=(release-artifact/*.dmg)
-          if [[ ${#dmg_files[@]} -ne 2 ]]; then
-            echo "应生成两个架构专用 DMG，实际找到 ${#dmg_files[@]} 个。" >&2
+          if [[ ${#dmg_files[@]} -ne 1 || ! -s release-artifact/appcast.xml ]]; then
+            echo "应生成一份通用 DMG 和 appcast.xml。" >&2
             exit 1
           fi
           if gh release view "$TAG" >/dev/null 2>&1; then
+            if [[ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" != "true" ]]; then
+              echo "发布版本 $TAG 已公开，拒绝覆盖更新包。" >&2
+              exit 1
+            fi
             gh release edit "$TAG" --title "$TITLE" --notes-file release-notes/RELEASE_NOTES.md
-            gh release upload "$TAG" "${dmg_files[@]}" --clobber
+            gh release upload "$TAG" "${dmg_files[@]}" release-artifact/appcast.xml --clobber
           else
-            gh release create "$TAG" "${dmg_files[@]}" --title "$TITLE" --notes-file release-notes/RELEASE_NOTES.md
+            gh release create "$TAG" "${dmg_files[@]}" release-artifact/appcast.xml --draft --title "$TITLE" --notes-file release-notes/RELEASE_NOTES.md
+          fi
+          if [[ "$TAG" == *-* ]]; then
+            gh release edit "$TAG" --prerelease --draft=false
+          else
+            gh release edit "$TAG" --draft=false
           fi
