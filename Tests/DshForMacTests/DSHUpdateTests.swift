@@ -5,6 +5,16 @@ import Testing
 
 @MainActor
 struct DSHUpdateTests {
+    @Test func notificationBridgeHasItsOwnMinimumDSHVersion() {
+        let plugin = RecommendedDSHPlugin.taskNotifications
+        #expect(plugin.minimumDSHVersion == "0.1.5-rc.3")
+        #expect(!plugin.supportsDSHVersion("0.1.5-rc.1"))
+        #expect(!plugin.supportsDSHVersion("0.1.5-rc.2"))
+        #expect(plugin.supportsDSHVersion("0.1.5-rc.3"))
+        #expect(plugin.supportsDSHVersion("0.1.5"))
+        #expect(plugin.supportsDSHVersion("0.1.7-rc.1"))
+    }
+
     @Test func minimumDSHVersionHandlesPrereleaseAndStableReleases() {
         #expect(DSHCompatibility.minimumVersion == "0.1.5-rc.1")
         #expect(!DSHCompatibility.supports("0.1.5-alpha.2"))
@@ -92,10 +102,16 @@ struct DSHUpdateTests {
         var checkedTags: [String] = []
         var checkedRegistry: PackageRegistry?
         var appCheckCount = 0
+        var testReminderCount = 0
         var didApply = false
+        var didRequestRestart = false
         let controller = SettingsViewController(
             settings: fixture.settings,
-            onApply: { _, _, _ in didApply = true },
+            onApply: { _, restartRequired, _ in
+                didApply = true
+                didRequestRestart = restartRequired
+            },
+            onTestTaskReminder: { testReminderCount += 1 },
             onCheckUpdates: {
                 checkedTags = fixture.settings.updateTags
                 checkedRegistry = fixture.settings.registry
@@ -108,6 +124,17 @@ struct DSHUpdateTests {
         }
         let views = descendants(controller.view)
         let buttons = views.compactMap { $0 as? NSButton }
+        let reminderCheckbox = try #require(buttons.first { $0.title == "后台任务提醒" })
+        let testReminder = try #require(buttons.first { $0.title == "发送测试提醒" })
+        #expect(!testReminder.isEnabled)
+        reminderCheckbox.state = .on
+        reminderCheckbox.sendAction(reminderCheckbox.action, to: reminderCheckbox.target)
+        #expect(testReminder.isEnabled)
+        testReminder.sendAction(testReminder.action, to: testReminder.target)
+        #expect(testReminderCount == 1)
+        reminderCheckbox.state = .off
+        reminderCheckbox.sendAction(reminderCheckbox.action, to: reminderCheckbox.target)
+        #expect(!testReminder.isEnabled)
         let latest = try #require(buttons.first { $0.title == "latest" })
         #expect(latest.state == .on)
         #expect(!latest.isEnabled)
@@ -127,11 +154,41 @@ struct DSHUpdateTests {
         #expect(appCheckCount == 1)
         #expect(checkedTags.isEmpty)
         let check = try #require(buttons.first { $0.title == "检查 DSH 更新" })
+        #expect((check.superview as? NSStackView)?.arrangedSubviews.contains {
+            ($0 as? NSTextField)?.stringValue == "正在读取…"
+        } == true)
+        #expect(!views.compactMap { $0 as? NSTextField }.contains { ["应用", "DSH"].contains($0.stringValue) })
         check.sendAction(check.action, to: check.target)
         #expect(appCheckCount == 1)
         #expect(checkedTags == ["latest", "alpha", "next"])
         #expect(checkedRegistry == .npm)
         #expect(!didApply)
+
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: SettingsViewController.preferredWidth, height: 650),
+                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentViewController = controller
+        window.orderFront(nil)
+        controller.update(serviceStatus: "运行中", runtimeVersion: "0.1.7-rc.1",
+                          installedVersions: ["0.1.7-rc.1"], updateCheckStatus: "DSH 已是最新版本。",
+                          canDownloadUpdate: false, isUpdateOperationInProgress: false,
+                          recommendedPlugins: [], pluginStatus: "", isPluginOperationInProgress: false)
+        let result = try #require(descendants(controller.view).compactMap { $0 as? NSTextField }.first {
+            $0.stringValue == "DSH 已是最新版本。"
+        })
+        #expect(check.superview?.superview === result.superview?.superview)
+        window.contentView?.layoutSubtreeIfNeeded()
+        let appButtonX = appCheck.convert(.zero, to: controller.view).x
+        let dshButtonX = check.convert(.zero, to: controller.view).x
+        #expect(abs(appButtonX - dshButtonX) < 1)
+        let save = try #require(buttons.first { $0.title == "保存" })
+        save.sendAction(save.action, to: save.target)
+        #expect(didApply)
+        #expect(!didRequestRestart)
+        #expect(window.isVisible)
+        let close = try #require(buttons.first { $0.title == "关闭" })
+        close.sendAction(close.action, to: close.target)
+        #expect(!window.isVisible)
     }
 
     @Test func checksEverySelectedTag() async throws {

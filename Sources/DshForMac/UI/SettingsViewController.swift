@@ -1,9 +1,12 @@
 import AppKit
 
 final class SettingsViewController: NSViewController {
+    static let preferredWidth: CGFloat = 470
+    private static let contentWidth: CGFloat = preferredWidth - 56
+    private static let updateButtonOffset: CGFloat = 136
+
     private let statusValue = NSTextField(labelWithString: "正在读取…")
     private let runtimePopup = NSPopUpButton(frame: .zero, pullsDown: false)
-    private let minimumDSHVersionLabel = NSTextField(labelWithString: "最低兼容 DSH：\(DSHCompatibility.minimumVersion)")
     private let openVersionsButton = NSButton(title: "打开目录", target: nil, action: nil)
     private let registryPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let updateIntervalPopup = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -17,19 +20,25 @@ final class SettingsViewController: NSViewController {
     private let portField = NSTextField(string: "")
     private let dshMarketCheckbox = NSButton(checkboxWithTitle: "DSH Market", target: nil, action: nil)
     private let workspaceDrop2AddCheckbox = NSButton(checkboxWithTitle: "拖入文件夹添加工作区", target: nil, action: nil)
+    private let taskNotificationsCheckbox = NSButton(checkboxWithTitle: "后台任务提醒", target: nil, action: nil)
+    private let testTaskReminderButton = NSButton(title: "发送测试提醒", target: nil, action: nil)
     private let pluginStatusLabel = NSTextField(wrappingLabelWithString: "")
     private let applyButton = NSButton(title: "保存", target: nil, action: nil)
+    private let closeButton = NSButton(title: "关闭", target: nil, action: nil)
     private let settings: AppSettings
     private let onApply: (String?, Bool, [RecommendedDSHPlugin: Bool]) -> Void
+    private let onTestTaskReminder: () -> Void
     private let onCheckUpdates: () -> Void
     private let onCheckAppUpdates: () -> Void
     private let onDownloadUpdate: () -> Void
     private let onOpenVersionsDirectory: () -> Void
+    private var activeRuntimeVersion: String?
     private var pendingRecommendedPluginSelections: [RecommendedDSHPlugin: Bool]?
 
     init(
         settings: AppSettings = .shared,
         onApply: @escaping (String?, Bool, [RecommendedDSHPlugin: Bool]) -> Void,
+        onTestTaskReminder: @escaping () -> Void,
         onCheckUpdates: @escaping () -> Void,
         onCheckAppUpdates: @escaping () -> Void,
         onDownloadUpdate: @escaping () -> Void,
@@ -37,6 +46,7 @@ final class SettingsViewController: NSViewController {
     ) {
         self.settings = settings
         self.onApply = onApply
+        self.onTestTaskReminder = onTestTaskReminder
         self.onCheckUpdates = onCheckUpdates
         self.onCheckAppUpdates = onCheckAppUpdates
         self.onDownloadUpdate = onDownloadUpdate
@@ -75,6 +85,7 @@ final class SettingsViewController: NSViewController {
         isPluginOperationInProgress: Bool
     ) {
         statusValue.stringValue = serviceStatus
+        activeRuntimeVersion = runtimeVersion
         runtimePopup.removeAllItems()
         runtimePopup.addItems(withTitles: installedVersions)
         for item in runtimePopup.itemArray where !DSHCompatibility.supports(item.title) {
@@ -115,6 +126,7 @@ final class SettingsViewController: NSViewController {
     private func configureView() {
         let appVersionValue = NSTextField(labelWithString: AppMetadata.version)
         appVersionValue.textColor = .secondaryLabelColor
+        appVersionValue.widthAnchor.constraint(equalToConstant: Self.updateButtonOffset).isActive = true
         checkAppUpdatesButton.target = self
         checkAppUpdatesButton.action = #selector(checkAppUpdates)
         appReleasesButton.target = self
@@ -123,16 +135,14 @@ final class SettingsViewController: NSViewController {
         appReleasesButton.contentTintColor = .linkColor
         appUpdateStatusLabel.textColor = .secondaryLabelColor
         appUpdateStatusLabel.maximumNumberOfLines = 3
-        appUpdateStatusLabel.preferredMaxLayoutWidth = 250
+        appUpdateStatusLabel.preferredMaxLayoutWidth = 280
         appUpdateStatusLabel.isHidden = true
         statusValue.lineBreakMode = .byTruncatingMiddle
         statusValue.textColor = .secondaryLabelColor
         statusValue.maximumNumberOfLines = 1
-        runtimePopup.widthAnchor.constraint(equalToConstant: 160).isActive = true
-        minimumDSHVersionLabel.textColor = .secondaryLabelColor
-        minimumDSHVersionLabel.font = .systemFont(ofSize: 11)
-        registryPopup.widthAnchor.constraint(equalToConstant: 160).isActive = true
-        updateIntervalPopup.widthAnchor.constraint(equalToConstant: 160).isActive = true
+        runtimePopup.widthAnchor.constraint(equalToConstant: 140).isActive = true
+        registryPopup.widthAnchor.constraint(equalToConstant: 180).isActive = true
+        updateIntervalPopup.widthAnchor.constraint(equalToConstant: 180).isActive = true
         portField.stringValue = String(settings.port)
         portField.alignment = .left
         portField.widthAnchor.constraint(equalToConstant: 110).isActive = true
@@ -151,17 +161,28 @@ final class SettingsViewController: NSViewController {
         }
         dshMarketCheckbox.tag = 0
         workspaceDrop2AddCheckbox.tag = 1
+        taskNotificationsCheckbox.tag = 2
         dshMarketCheckbox.target = self
         workspaceDrop2AddCheckbox.target = self
+        taskNotificationsCheckbox.target = self
         dshMarketCheckbox.action = #selector(recommendedPluginChanged(_:))
         workspaceDrop2AddCheckbox.action = #selector(recommendedPluginChanged(_:))
+        taskNotificationsCheckbox.action = #selector(recommendedPluginChanged(_:))
+        testTaskReminderButton.target = self
+        testTaskReminderButton.action = #selector(sendTestTaskReminder)
+        testTaskReminderButton.controlSize = .small
+        testTaskReminderButton.isEnabled = false
+        testTaskReminderButton.toolTip = "只测试 DshForMac 的浮动提醒卡片，不验证 DSH 插件事件。"
         pluginStatusLabel.textColor = .secondaryLabelColor
         pluginStatusLabel.maximumNumberOfLines = 3
         pluginStatusLabel.isHidden = true
 
         applyButton.target = self
-        applyButton.action = #selector(applyAndRestart)
+        applyButton.action = #selector(applySettings)
         applyButton.keyEquivalent = "\r"
+        closeButton.target = self
+        closeButton.action = #selector(closeSettings)
+        closeButton.keyEquivalent = "\u{1b}"
         openVersionsButton.target = self
         openVersionsButton.action = #selector(openVersionsDirectory)
         checkUpdatesButton.target = self
@@ -175,17 +196,13 @@ final class SettingsViewController: NSViewController {
         downloadUpdateButton.isHidden = true
         checkResultLabel.textColor = .secondaryLabelColor
         checkResultLabel.maximumNumberOfLines = 3
-        checkResultLabel.preferredMaxLayoutWidth = 205
+        checkResultLabel.preferredMaxLayoutWidth = 245
         checkResultLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
         checkResultLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         checkResultLabel.isHidden = true
         let runtimeControls = NSStackView(views: [runtimePopup, openVersionsButton])
         runtimeControls.orientation = .horizontal
         runtimeControls.spacing = 8
-        let runtimeVersionControls = NSStackView(views: [runtimeControls, minimumDSHVersionLabel])
-        runtimeVersionControls.orientation = .vertical
-        runtimeVersionControls.alignment = .leading
-        runtimeVersionControls.spacing = 4
         let appVersionControls = NSStackView(views: [appVersionValue, checkAppUpdatesButton])
         appVersionControls.orientation = .horizontal
         appVersionControls.spacing = 8
@@ -193,55 +210,67 @@ final class SettingsViewController: NSViewController {
         appUpdateControls.orientation = .vertical
         appUpdateControls.alignment = .leading
         appUpdateControls.spacing = 5
-        let updateActionControls = NSStackView(views: [updateIntervalPopup, checkUpdatesButton])
-        updateActionControls.orientation = .horizontal
-        updateActionControls.spacing = 8
         let downloadControls = NSStackView(views: [checkResultLabel, downloadUpdateButton])
         downloadControls.orientation = .horizontal
         downloadControls.alignment = .firstBaseline
         downloadControls.spacing = 8
-        downloadControls.widthAnchor.constraint(equalToConstant: 250).isActive = true
-        let updateControls = NSStackView(views: [updateActionControls, downloadControls])
-        updateControls.orientation = .vertical
-        updateControls.alignment = .leading
-        updateControls.spacing = 8
+        downloadControls.widthAnchor.constraint(equalToConstant: 298).isActive = true
+        let statusLine = NSStackView(views: [statusValue, checkUpdatesButton])
+        statusLine.orientation = .horizontal
+        statusLine.alignment = .centerY
+        statusLine.spacing = 8
+        let statusControls = NSStackView(views: [statusLine, downloadControls])
+        statusControls.orientation = .vertical
+        statusControls.alignment = .leading
+        statusControls.spacing = 6
         let additionalTagControls = NSStackView(views: updateTagCheckboxes)
         additionalTagControls.orientation = .horizontal
         additionalTagControls.alignment = .centerY
         additionalTagControls.spacing = 8
         let appRow = makeRow(label: "DshForMac", value: appUpdateControls)
         appRow.alignment = .top
+        let statusRow = makeRow(label: "运行状态", value: statusControls)
+        statusRow.alignment = .top
+        let pluginRow = makeRow(label: "推荐插件", value: pluginControls())
+        pluginRow.alignment = .top
+
+        let footer = NSStackView(views: [NSView(), closeButton, applyButton])
+        footer.orientation = .horizontal
+        footer.alignment = .centerY
+        footer.spacing = 8
+        footer.widthAnchor.constraint(equalToConstant: Self.contentWidth).isActive = true
 
         let content = NSStackView(views: [
             appRow,
-            makeRow(label: "运行状态", value: statusValue),
+            statusRow,
             makeRow(label: "运行端口", value: portField),
-            makeRow(label: "DSH 版本", value: runtimeVersionControls),
-            makeRow(label: "DSH 更新", value: updateControls),
+            makeDivider(),
+            makeRow(label: "DSH 版本", value: runtimeControls),
+            makeRow(label: "更新频率", value: updateIntervalPopup),
             makeRow(label: "DSH 检查标签", value: additionalTagControls),
             makeRow(label: "包下载镜像", value: registryPopup),
             makeDivider(),
-            makeRow(label: "推荐插件", value: pluginControls()),
+            pluginRow,
             makeDivider(),
-            applyButton,
+            footer,
         ])
         content.orientation = .vertical
         content.alignment = .leading
-        content.spacing = 15
+        content.spacing = 11
         content.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(content)
 
         NSLayoutConstraint.activate([
             content.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 28),
             content.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -28),
-            content.topAnchor.constraint(equalTo: view.topAnchor, constant: 30),
-            content.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor, constant: -26),
-            statusValue.widthAnchor.constraint(equalToConstant: 250),
+            content.topAnchor.constraint(equalTo: view.topAnchor, constant: 22),
+            content.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor, constant: -20),
+            statusValue.widthAnchor.constraint(equalToConstant: Self.updateButtonOffset),
         ])
     }
 
     private func pluginControls() -> NSStackView {
-        let githubButton = NSButton(title: "Github", target: self, action: #selector(openDSHMarketRepository))
+        let githubButton = NSButton(title: "GitHub", target: self, action: #selector(openDSHMarketRepository))
         githubButton.isBordered = false
         githubButton.contentTintColor = .linkColor
         githubButton.toolTip = "https://github.com/dsh-market/dsh-market"
@@ -249,14 +278,14 @@ final class SettingsViewController: NSViewController {
         marketControls.orientation = .horizontal
         marketControls.alignment = .centerY
         marketControls.spacing = 8
-        let details = NSTextField(wrappingLabelWithString: "勾选状态会在保存后写入 DSH 的 web profile。")
-        details.textColor = .secondaryLabelColor
-        details.maximumNumberOfLines = 2
-        details.preferredMaxLayoutWidth = 250
-        let controls = NSStackView(views: [marketControls, workspaceDrop2AddCheckbox, details, pluginStatusLabel])
+        let reminderControls = NSStackView(views: [taskNotificationsCheckbox, testTaskReminderButton])
+        reminderControls.orientation = .horizontal
+        reminderControls.alignment = .centerY
+        reminderControls.spacing = 8
+        let controls = NSStackView(views: [marketControls, workspaceDrop2AddCheckbox, reminderControls, pluginStatusLabel])
         controls.orientation = .vertical
         controls.alignment = .leading
-        controls.spacing = 6
+        controls.spacing = 8
         return controls
     }
 
@@ -280,6 +309,7 @@ final class SettingsViewController: NSViewController {
             switch state.plugin {
             case .dshMarket: checkbox = dshMarketCheckbox
             case .workspaceDrop2Add: checkbox = workspaceDrop2AddCheckbox
+            case .taskNotifications: checkbox = taskNotificationsCheckbox
             }
             checkbox.state = selections[state.plugin, default: state.isEnabled] ? .on : .off
             checkbox.isEnabled = state.isAvailable && !isOperationInProgress
@@ -289,6 +319,8 @@ final class SettingsViewController: NSViewController {
                 checkbox.toolTip = state.plugin.detail
             }
         }
+        testTaskReminderButton.isEnabled = taskNotificationsCheckbox.isEnabled && taskNotificationsCheckbox.state == .on
+        applyButton.isEnabled = !isOperationInProgress
         pluginStatusLabel.stringValue = status
         pluginStatusLabel.isHidden = status.isEmpty
     }
@@ -297,11 +329,12 @@ final class SettingsViewController: NSViewController {
         let labelView = NSTextField(labelWithString: label)
         labelView.font = .systemFont(ofSize: 13, weight: .medium)
         labelView.setContentHuggingPriority(.required, for: .horizontal)
-        labelView.widthAnchor.constraint(equalToConstant: 92).isActive = true
+        labelView.widthAnchor.constraint(equalToConstant: 100).isActive = true
         let row = NSStackView(views: [labelView, value])
         row.orientation = .horizontal
         row.alignment = .centerY
-        row.spacing = 18
+        row.spacing = 16
+        row.widthAnchor.constraint(equalToConstant: Self.contentWidth).isActive = true
         return row
     }
 
@@ -309,11 +342,11 @@ final class SettingsViewController: NSViewController {
         let divider = NSBox()
         divider.boxType = .separator
         divider.translatesAutoresizingMaskIntoConstraints = false
-        divider.widthAnchor.constraint(equalToConstant: 360).isActive = true
+        divider.widthAnchor.constraint(equalToConstant: Self.contentWidth).isActive = true
         return divider
     }
 
-    @objc private func applyAndRestart() {
+    @objc private func applySettings() {
         let updateIndex = updateIntervalPopup.indexOfSelectedItem
         guard DSHUpdateCheckInterval.allCases.indices.contains(updateIndex) else { return }
         let updateInterval = DSHUpdateCheckInterval.allCases[updateIndex]
@@ -332,17 +365,29 @@ final class SettingsViewController: NSViewController {
             alert.runModal()
             return
         }
-        let restartRequired = settings.port != port || settings.selectedRuntimeVersion != version
+        if taskNotificationsCheckbox.state == .on,
+           let version, !RecommendedDSHPlugin.taskNotifications.supportsDSHVersion(version) {
+            let alert = NSAlert()
+            alert.messageText = "DSH 版本不支持任务提醒"
+            alert.informativeText = "后台任务提醒至少需要 DSH 0.1.5-rc.3。请先升级 DSH，或取消勾选任务提醒。"
+            alert.runModal()
+            return
+        }
+        let restartRequired = settings.port != port || (settings.selectedRuntimeVersion ?? activeRuntimeVersion) != version
         let pluginSelections = [
             RecommendedDSHPlugin.dshMarket: dshMarketCheckbox.state == .on,
             .workspaceDrop2Add: workspaceDrop2AddCheckbox.state == .on,
+            .taskNotifications: taskNotificationsCheckbox.state == .on,
         ]
         settings.selectedRuntimeVersion = version
         settings.port = port
         settings.updateCheckInterval = updateInterval
-        view.window?.performClose(nil)
-        pendingRecommendedPluginSelections = nil
+        pendingRecommendedPluginSelections = pluginSelections
         onApply(version, restartRequired, pluginSelections)
+    }
+
+    @objc private func closeSettings() {
+        view.window?.performClose(nil)
     }
 
     @objc private func registryChanged() {
@@ -375,11 +420,18 @@ final class SettingsViewController: NSViewController {
         onDownloadUpdate()
     }
 
+    @objc private func sendTestTaskReminder() {
+        onTestTaskReminder()
+    }
+
     @objc private func recommendedPluginChanged(_ sender: NSButton) {
         guard let plugin = RecommendedDSHPlugin.allCases[safe: sender.tag] else { return }
         var selections = pendingRecommendedPluginSelections ?? [:]
         selections[plugin] = sender.state == .on
         pendingRecommendedPluginSelections = selections
+        if plugin == .taskNotifications {
+            testTaskReminderButton.isEnabled = taskNotificationsCheckbox.isEnabled && taskNotificationsCheckbox.state == .on
+        }
     }
 }
 

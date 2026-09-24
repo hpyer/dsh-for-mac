@@ -7,6 +7,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     var onUpdateAvailableVersionChanged: ((String?) -> Void)?
     var onRecommendedPluginOperationStatusChanged: ((String, Bool) -> Void)?
     var onRequestDSHUpgrade: (() -> Void)?
+    var onTaskNotification: ((String, String, String) -> Void)?
 
     private let titleLabel = NSTextField(labelWithString: "DeepSeek Harness for Mac")
     private let statusLabel = NSTextField(labelWithString: "正在检测 Node.js…")
@@ -25,6 +26,8 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     private let reconnectButton = NSButton(title: "重新连接", target: nil, action: nil)
     private let previewBridgeToken = UUID().uuidString
     private var workspaceDrop2AddBridgeToken: String?
+    private var taskNotificationBridgeToken: String?
+    private var pendingNotificationSessionId: String?
     private lazy var filePreviewViewController: FilePreviewViewController = {
         let controller = FilePreviewViewController()
         controller.onClose = { [weak self] in
@@ -42,6 +45,10 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
         contentController.add(
             WeakScriptMessageHandler(owner: self),
             name: Self.workspaceDrop2AddBridgeHandlerName
+        )
+        contentController.add(
+            WeakScriptMessageHandler(owner: self),
+            name: Self.taskNotificationBridgeHandlerName
         )
         contentController.addUserScript(
             WKUserScript(
@@ -134,6 +141,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     private static let nodePathPreferenceKey = "preferredNodePath"
     private static let producedFilePreviewHandlerName = "dshProducedFilePreview"
     private static let workspaceDrop2AddBridgeHandlerName = "dshWorkspaceDrop2AddBridge"
+    private static let taskNotificationBridgeHandlerName = "dshTaskNotificationBridge"
 
     override func loadView() {
         view = NSView()
@@ -436,6 +444,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
 
     func applyRecommendedPluginSelections(
         _ selections: [RecommendedDSHPlugin: Bool],
+        dshVersion requestedVersion: String?,
         completion: @escaping (Bool) -> Void
     ) {
         guard !isLaunchingDeepSeekHarness else {
@@ -448,7 +457,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
             completion(false)
             return
         }
-        guard let version = activeDSHVersion ?? runtimeManager.preferredRuntimeVersion() else {
+        guard let version = requestedVersion ?? activeDSHVersion ?? runtimeManager.preferredRuntimeVersion() else {
             onRecommendedPluginOperationStatusChanged?("尚未安装可用的 DSH 版本。", false)
             completion(false)
             return
@@ -583,6 +592,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     private func showEnvironmentView() {
         hideWebOperationStatus()
         resetWorkspaceDrop2AddBridge()
+        taskNotificationBridgeToken = nil
         webView.stopLoading()
         webView.isHidden = true
         closeFilePreview()
@@ -1127,6 +1137,12 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
             return
         }
 
+        if message.name == Self.taskNotificationBridgeHandlerName {
+            guard let url = message.frameInfo.request.url, isLocalDSHURL(url) else { return }
+            receiveTaskNotificationBridge(payload)
+            return
+        }
+
         guard message.name == Self.producedFilePreviewHandlerName,
               payload["token"] as? String == previewBridgeToken
         else { return }
@@ -1173,6 +1189,40 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
         webView.isWorkspaceDrop2AddBridgeReady = false
         webView.sidebarDrop2AddWidth = 0
         updateWorkspaceDrop2AddPageProtection(width: 0, enabled: false)
+    }
+
+    private func receiveTaskNotificationBridge(_ payload: [String: Any]) {
+        guard let token = payload["token"] as? String,
+              UUID(uuidString: token) != nil,
+              let kind = payload["kind"] as? String else { return }
+        if kind == "ready" {
+            taskNotificationBridgeToken = token
+            deliverPendingNotificationSession()
+            return
+        }
+        guard token == taskNotificationBridgeToken,
+              let sessionId = payload["sessionId"] as? String,
+              let key = payload["key"] as? String
+        else { return }
+        onTaskNotification?(kind, sessionId, key)
+    }
+
+    func openDSHSession(_ sessionId: String) {
+        pendingNotificationSessionId = sessionId
+        deliverPendingNotificationSession()
+    }
+
+    private func deliverPendingNotificationSession() {
+        guard let sessionId = pendingNotificationSessionId,
+              taskNotificationBridgeToken != nil,
+              let data = try? JSONSerialization.data(withJSONObject: sessionId, options: .fragmentsAllowed),
+              let json = String(data: data, encoding: .utf8) else { return }
+        webView.evaluateJavaScript("window.__dshForMacTaskNotifications?.open(\(json));") { [weak self] _, error in
+            guard error == nil else { return }
+            if self?.pendingNotificationSessionId == sessionId {
+                self?.pendingNotificationSessionId = nil
+            }
+        }
     }
 
     private func deliverWorkspaceDirectory(_ directoryURL: URL) {
@@ -1240,6 +1290,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation?) {
         resetWorkspaceDrop2AddBridge()
+        taskNotificationBridgeToken = nil
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation?) {

@@ -412,7 +412,7 @@ final class DSHRuntimeManager {
             return RecommendedDSHPluginState(
                 plugin: plugin,
                 isEnabled: isEnabled,
-                isAvailable: plugin != .workspaceDrop2Add || isEnabled || workspaceDrop2AddSourceDirectory() != nil
+                isAvailable: !plugin.isBundled || isEnabled || bundledPluginSourceDirectory(plugin) != nil
             )
         }
     }
@@ -423,6 +423,9 @@ final class DSHRuntimeManager {
         using runtime: NodeRuntime,
         dshVersion: String
     ) async throws -> [RecommendedDSHPluginState] {
+        if enabled, !plugin.supportsDSHVersion(dshVersion) {
+            throw DSHRuntimeError.recommendedPluginUnavailable("\(plugin.title) 需要 DSH \(plugin.minimumDSHVersion ?? "") 或更高版本")
+        }
         let rootDirectory = try applicationSupportDirectory()
         let runtimeDirectory = runtimeVersionsDirectory(in: rootDirectory).appendingPathComponent(dshVersion, isDirectory: true)
         let entryPoint = runtimeDirectory.appendingPathComponent("node_modules/@deepseek-ai/dsh/lib/bin.js")
@@ -431,8 +434,8 @@ final class DSHRuntimeManager {
         }
 
         let packageSpecifier: String
-        if enabled, plugin == .workspaceDrop2Add {
-            guard let sourceDirectory = workspaceDrop2AddSourceDirectory() else {
+        if enabled, plugin.isBundled {
+            guard let sourceDirectory = bundledPluginSourceDirectory(plugin) else {
                 throw DSHRuntimeError.recommendedPluginUnavailable(plugin.title)
             }
             packageSpecifier = sourceDirectory.path
@@ -553,16 +556,20 @@ final class DSHRuntimeManager {
     }
 
     private func workspaceDrop2AddSourceDirectory() -> URL? {
+        bundledPluginSourceDirectory(.workspaceDrop2Add)
+    }
+
+    private func bundledPluginSourceDirectory(_ plugin: RecommendedDSHPlugin) -> URL? {
         let candidates = [
-            Bundle.main.resourceURL?.appendingPathComponent("dsh-plugins/dsh-workspace-drop2add", isDirectory: true),
+            Bundle.main.resourceURL?.appendingPathComponent("dsh-plugins/\(plugin.packageName)", isDirectory: true),
             URL(fileURLWithPath: fileManager.currentDirectoryPath, isDirectory: true)
-                .appendingPathComponent("dsh-plugins/dsh-workspace-drop2add", isDirectory: true),
+                .appendingPathComponent("dsh-plugins/\(plugin.packageName)", isDirectory: true),
             URL(fileURLWithPath: #filePath)
                 .deletingLastPathComponent()
                 .deletingLastPathComponent()
                 .deletingLastPathComponent()
                 .deletingLastPathComponent()
-                .appendingPathComponent("dsh-plugins/dsh-workspace-drop2add", isDirectory: true),
+                .appendingPathComponent("dsh-plugins/\(plugin.packageName)", isDirectory: true),
         ].compactMap { $0 }
         return candidates.first { fileManager.fileExists(atPath: $0.appendingPathComponent("package.json").path) }
     }
@@ -709,11 +716,14 @@ final class DSHRuntimeManager {
             throw DSHRuntimeError.selectedVersionUnavailable(version)
         }
 
-        try await migrateWorkspaceDrop2AddPluginIfNeeded(
-            runtimeDirectory: runtimeDirectory,
-            nodeURL: nodeURL,
-            environment: environment
-        )
+        for plugin in [RecommendedDSHPlugin.workspaceDrop2Add, .taskNotifications] {
+            try await migrateBundledPluginIfNeeded(
+                plugin,
+                runtimeDirectory: runtimeDirectory,
+                nodeURL: nodeURL,
+                environment: environment
+            )
+        }
 
         statusHandler("正在启动 DSH \(version)")
         let address = URL(string: "http://127.0.0.1:\(port)/")!
@@ -740,12 +750,13 @@ final class DSHRuntimeManager {
     /// installed or updated. The DSH profile is user-owned, so only DshForMac's
     /// former package name and local `link:` specifiers are changed; registry
     /// installs of the same package remain untouched.
-    private func migrateWorkspaceDrop2AddPluginIfNeeded(
+    private func migrateBundledPluginIfNeeded(
+        _ plugin: RecommendedDSHPlugin,
         runtimeDirectory: URL,
         nodeURL: URL,
         environment: [String: String]
     ) async throws {
-        guard let sourceDirectory = workspaceDrop2AddSourceDirectory(),
+        guard let sourceDirectory = bundledPluginSourceDirectory(plugin),
               let manifest = webProfileManifest()
         else {
             return
@@ -754,15 +765,16 @@ final class DSHRuntimeManager {
         let dependencies = manifest["dependencies"] as? [String: Any] ?? [:]
         let bundles = (((manifest["dsh"] as? [String: Any])?["profile"] as? [String: Any])?["bundles"] as? [String]) ?? []
         let legacyPackage = "@dshformac/workspace-drop"
-        let hasLegacyPlugin = dependencies[legacyPackage] != nil || bundles.contains(legacyPackage)
-        let currentSpecifier = dependencies[RecommendedDSHPlugin.workspaceDrop2Add.packageName] as? String
+        let hasLegacyPlugin = plugin == .workspaceDrop2Add &&
+            (dependencies[legacyPackage] != nil || bundles.contains(legacyPackage))
+        let currentSpecifier = dependencies[plugin.packageName] as? String
         let needsSourceMigration = currentSpecifier.map {
             $0.hasPrefix("link:") && !linkSpecifier($0, pointsTo: sourceDirectory)
         } ?? false
 
         guard hasLegacyPlugin || needsSourceMigration else { return }
 
-        statusHandler("正在迁移内置拖放插件…")
+        statusHandler("正在更新本地 \(plugin.title) 插件…")
         let entryPoint = runtimeDirectory.appendingPathComponent("node_modules/@deepseek-ai/dsh/lib/bin.js")
         if hasLegacyPlugin {
             try await runProfilePluginCommand(

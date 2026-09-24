@@ -31,6 +31,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
     private var recommendedPluginStatus = ""
     private var isRecommendedPluginOperationInProgress = false
     private let appUpdateController = AppUpdateController()
+    private let taskReminderController = TaskReminderController()
     private var appUpdateStatus = ""
 
     private enum ToolbarIdentifier {
@@ -73,6 +74,21 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
             self?.isRecommendedPluginOperationInProgress = isInProgress
             self?.refreshSettings()
         }
+        contentViewController.onTaskNotification = { [weak self] kind, sessionId, key in
+            guard let self else { return }
+            guard self.mainViewController?.recommendedPluginStates().contains(where: {
+                $0.plugin == .taskNotifications && $0.isEnabled
+            }) == true else { return }
+            let isAppVisible = NSApp.isActive && (
+                (self.windowController?.window?.isVisible == true && self.windowController?.window?.isMiniaturized == false) ||
+                (self.settingsWindowController?.window?.isVisible == true && self.settingsWindowController?.window?.isMiniaturized == false)
+            )
+            self.taskReminderController.receive(kind: kind, sessionId: sessionId, key: key, isAppVisible: isAppVisible)
+        }
+        taskReminderController.onOpenSession = { [weak self] sessionId in
+            self?.showMainWindow()
+            self?.mainViewController?.openDSHSession(sessionId)
+        }
         mainViewController = contentViewController
         let initialContentSize = NSSize(width: 1_280, height: 720)
 
@@ -106,6 +122,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        taskReminderController.dismissToast()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -467,6 +487,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
                         pluginSelections: pluginSelections
                     )
                 },
+                onTestTaskReminder: { [weak self] in
+                    self?.taskReminderController.sendTestReminder()
+                },
                 onCheckUpdates: { [weak self] in
                     self?.mainViewController?.checkForUpdatesNow()
                 },
@@ -481,14 +504,14 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
                 }
             )
             let settingsWindow = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 440, height: 630),
+                contentRect: NSRect(x: 0, y: 0, width: SettingsViewController.preferredWidth, height: 650),
                 styleMask: [.titled, .closable, .miniaturizable],
                 backing: .buffered,
                 defer: false
             )
             settingsWindow.title = "DshForMac 设置"
             settingsWindow.isReleasedWhenClosed = false
-            settingsWindow.contentMinSize = NSSize(width: 440, height: 450)
+            settingsWindow.contentMinSize = NSSize(width: SettingsViewController.preferredWidth, height: 450)
             settingsWindow.contentViewController = settingsViewController
             settingsWindow.center()
             settingsWindowController = NSWindowController(window: settingsWindow)
@@ -518,6 +541,17 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
         restartRequired: Bool,
         pluginSelections: [RecommendedDSHPlugin: Bool]
     ) {
+        if pluginSelections[.taskNotifications] == false {
+            taskReminderController.dismissToast()
+        }
+        applySavedSettings(version: version, restartRequired: restartRequired, pluginSelections: pluginSelections)
+    }
+
+    private func applySavedSettings(
+        version: String?,
+        restartRequired: Bool,
+        pluginSelections: [RecommendedDSHPlugin: Bool]
+    ) {
         mainViewController?.checkScheduledUpdates()
         let pluginChangesRequired = mainViewController?.hasRecommendedPluginSelectionChanges(pluginSelections) ?? false
         let shouldAskToRestart = restartRequired || pluginChangesRequired
@@ -525,13 +559,23 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
 
         guard pluginChangesRequired else {
             if shouldRestart {
+                settingsWindowController?.window?.performClose(nil)
                 mainViewController?.selectDSHVersion(version)
+            } else {
+                (settingsWindowController?.contentViewController as? SettingsViewController)?.prepareForDisplay()
+                refreshSettings()
             }
             return
         }
 
-        mainViewController?.applyRecommendedPluginSelections(pluginSelections) { [weak self] didChangePlugins in
-            guard let self, shouldRestart, didChangePlugins || restartRequired else { return }
+        mainViewController?.applyRecommendedPluginSelections(pluginSelections, dshVersion: version) { [weak self] didChangePlugins in
+            guard let self else { return }
+            guard shouldRestart, didChangePlugins || restartRequired else {
+                (self.settingsWindowController?.contentViewController as? SettingsViewController)?.prepareForDisplay()
+                self.refreshSettings()
+                return
+            }
+            self.settingsWindowController?.window?.performClose(nil)
             self.mainViewController?.selectDSHVersion(version)
         }
     }
