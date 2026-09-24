@@ -43,9 +43,13 @@
     </td>
   </tr>
   <tr>
-    <td align="center" colspan="2">
-      <a href="screenshots/setting.png"><img src="screenshots/setting.png" alt="DshForMac 设置窗口" width="200"></a><br>
+    <td align="center">
+      <a href="screenshots/setting.png"><img src="screenshots/setting.png" alt="DshForMac 设置窗口" width="360"></a><br>
       <strong>应用设置</strong>
+    </td>
+    <td align="center">
+      <a href="screenshots/tray-menu.png"><img src="screenshots/tray-menu.png" alt="DshForMac 菜单栏菜单" width="280"></a><br>
+      <strong>菜单栏</strong>
     </td>
   </tr>
 </table>
