@@ -8,4 +8,6 @@ importers:
 
   .: {}
 
+  dsh-task-notifications: {}
+
   dsh-workspace-drop2add: {}

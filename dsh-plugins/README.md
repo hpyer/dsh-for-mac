@@ -31,3 +31,6 @@ dsh plugin --profile web remove dsh-workspace-drop2add
 - [`dsh-workspace-drop2add`](dsh-workspace-drop2add/README.md) pairs with DshForMac's
   token-checked native bridge so a Finder folder dragged onto the left sidebar
   can become a DSH workspace.
+- `dsh-task-notifications` is an opt-in Web profile plugin. It forwards only
+  session IDs and event kinds to DshForMac for in-app task reminders. These
+  reminders do not use macOS Notification Center.

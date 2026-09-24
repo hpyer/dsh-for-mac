@@ -47,6 +47,10 @@ if [[ ! -f "$ROOT_DIR/dsh-plugins/dsh-workspace-drop2add/package.json" ]]; then
   print -u2 "Required workspace-drop2add plugin source is missing."
   exit 1
 fi
+if [[ ! -f "$ROOT_DIR/dsh-plugins/dsh-task-notifications/package.json" ]]; then
+  print -u2 "Required task notification plugin source is missing."
+  exit 1
+fi
 
 cd "$ROOT_DIR"
 if [[ "${DSHFORMAC_SKIP_BUILD:-0}" != "1" ]]; then
@@ -121,6 +125,7 @@ install -m 644 "$TRAY_IMAGE" "$RESOURCES_DIR/dsh-whale.png"
 install -m 644 "$DOCK_WHALE_IMAGE" "$RESOURCES_DIR/dsh-whale-dock.png"
 mkdir -p "$RESOURCES_DIR/dsh-plugins"
 ditto "$ROOT_DIR/dsh-plugins/dsh-workspace-drop2add" "$RESOURCES_DIR/dsh-plugins/dsh-workspace-drop2add"
+ditto "$ROOT_DIR/dsh-plugins/dsh-task-notifications" "$RESOURCES_DIR/dsh-plugins/dsh-task-notifications"
 swift "$ROOT_DIR/scripts/render-dock-icon.swift" "$DOCK_WHALE_IMAGE" "$RESOURCES_DIR/${APP_NAME}.icns"
 
 if [[ ! -f "$RESOURCES_DIR/dsh-whale.png" || ! -f "$RESOURCES_DIR/dsh-whale-dock.png" ]]; then
