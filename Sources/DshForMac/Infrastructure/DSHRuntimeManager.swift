@@ -72,11 +72,17 @@ enum DSHRuntimeError: LocalizedError {
     case executableMissing
     case nativeDependencyMissing(String)
     case selectedVersionUnavailable(String)
+    case versionBelowMinimum(String)
     case portInUse(Int)
     case startupFailed(String)
     case startupTimedOut(String)
     case recommendedPluginUnavailable(String)
     case recommendedPluginCommandFailed(String)
+
+    var requiresUpgrade: Bool {
+        if case .versionBelowMinimum = self { return true }
+        return false
+    }
 
     var errorDescription: String? {
         switch self {
@@ -94,6 +100,8 @@ enum DSHRuntimeError: LocalizedError {
             "原生依赖 \(module) 未构建成功。请检查 Node.js 开发工具链后重试下载。"
         case let .selectedVersionUnavailable(version):
             "所选 DSH 版本 \(version) 不可用。请选择另一个已安装版本。"
+        case let .versionBelowMinimum(version):
+            "DSH \(version) 低于当前 DshForMac 要求的最低版本 \(DSHCompatibility.minimumVersion)。请升级 DSH。"
         case let .startupFailed(reason):
             "DSH 启动失败。\(reason)"
         case let .startupTimedOut(log):
@@ -275,6 +283,9 @@ final class DSHRuntimeManager {
 
     /// Resolves the exact version the user chose, even if registry tags have moved.
     func downloadVersion(_ version: String, using runtime: NodeRuntime) async throws {
+        guard DSHCompatibility.supports(version) else {
+            throw DSHRuntimeError.versionBelowMinimum(version)
+        }
         guard let npmURL = runtime.npmURL else { throw DSHRuntimeError.npmUnavailable }
         let release = try await resolveRelease(
             tag: version, npmURL: npmURL, environment: processEnvironment(for: runtime)
@@ -310,6 +321,9 @@ final class DSHRuntimeManager {
         using runtime: NodeRuntime,
         reportsProgress: Bool = true
     ) async throws {
+        guard DSHCompatibility.supports(release.version) else {
+            throw DSHRuntimeError.versionBelowMinimum(release.version)
+        }
         guard let npmURL = runtime.npmURL else { throw DSHRuntimeError.npmUnavailable }
         let rootDirectory = try applicationSupportDirectory()
         let runtimeDirectory = runtimeVersionsDirectory(in: rootDirectory)
@@ -459,6 +473,7 @@ final class DSHRuntimeManager {
     func rollbackRuntimeVersion(excluding failedVersion: String?) -> String? {
         guard let root = try? applicationSupportDirectory(),
               let version = currentRuntimeVersion(in: root), version != failedVersion,
+              DSHCompatibility.supports(version),
               fileManager.isExecutableFile(atPath: runtimeVersionsDirectory(in: root)
                 .appendingPathComponent(version).appendingPathComponent("node_modules/.bin/dsh").path)
         else { return nil }
@@ -685,6 +700,9 @@ final class DSHRuntimeManager {
         environment: [String: String]
     ) async throws -> DSHStartupResult {
         lastAttemptedVersion = version
+        guard DSHCompatibility.supports(version) else {
+            throw DSHRuntimeError.versionBelowMinimum(version)
+        }
         let runtimeDirectory = versionsDirectory.appendingPathComponent(version, isDirectory: true)
         let executableURL = runtimeDirectory.appendingPathComponent("node_modules/.bin/dsh")
         guard fileManager.isExecutableFile(atPath: executableURL.path) else {
@@ -851,6 +869,9 @@ final class DSHRuntimeManager {
             return leftVersion < rightVersion
         }) else {
             throw DSHRuntimeError.metadataInvalid
+        }
+        guard DSHCompatibility.supports(preferredRelease.version) else {
+            throw DSHRuntimeError.versionBelowMinimum(preferredRelease.version)
         }
 
         let matchingTags = releases

@@ -41,7 +41,7 @@ DSH 0.1.2-rc.1 会将思考链和相对路径产物（例如 `.sql`、`.md`）�
 
 1. 应用启动时检测 Node.js。检测范围包括 `PATH`、Homebrew 常用路径和 nvm、fnm、Volta、mise、asdf 等常见管理器路径；也支持用户手动选择 `node` 可执行文件。
 2. Node.js 仅在版本为 22.19 或以上的 v22，或 v24 及以上，且同目录/环境中可找到 npm 与 npx 时视为可用。检测成功后自动进入 DSH 启动流程。
-3. 应用优先使用用户选定的版本，其次使用最近一次健康检查成功的当前版本；两者都不存在时，才会通过配置的 registry 查询候选版本。`latest` 始终会被检查；用户可多选 `alpha`、`beta`、`next` 作为额外检查标签。应用按完整 SemVer 优先级从可用候选中选择较新版本，并保留标签来源。
+3. 应用优先使用用户选定的版本，其次使用最近一次健康检查成功的当前版本；两者都不存在时，才会通过配置的 registry 查询候选版本。`latest` 始终会被检查；用户可多选 `alpha`、`beta`、`next` 作为额外检查标签。应用按完整 SemVer 优先级从可用候选中选择较新版本，并保留标签来源。启动和下载前以 `AppMetadata.minimumSupportedDSHVersion` 校验版本；当前门槛为 `0.1.5-rc.1`。低于门槛时不启动，也不因本次检查删除受管运行时；主窗口说明所需版本并提供 DSH 更新入口。回退候选也须满足门槛。
 4. DSH 被安装在独立版本目录中。优先使用 pnpm；未找到 pnpm 时会尝试通过 Corepack 启用，失败则使用 npm。下载后读取锁文件，确认 `@deepseek-ai/dsh` 的 integrity 与 registry 元数据一致，并执行包管理器的待处理构建，以生成 `fs-ext`、`node-pty` 等原生依赖。
 5. 应用使用已检测到的 `node` 直接执行 DSH 的 `lib/bin.js`，不经过 shell，也不会打开外部浏览器。服务通过 `http://127.0.0.1:<port>/` 健康检查；默认端口为 3080。
 6. 健康检查成功后才更新 `current` 软链接。重启只启动当前或手动选择的版本，不额外检查更新。正常退出或重启时，应用会终止自己管理的 DSH 子进程。
@@ -57,6 +57,8 @@ DSH 0.1.6 的 xterm DOM 渲染器只指定普通等宽字体。WebView 在文档
 ### DshForMac 应用更新
 
 应用本体通过 Sparkle 2.9.3 检查 GitHub Release 的 `appcast.xml`，使用 EdDSA 签名验证更新源和通用 DMG，保持 macOS 11 兼容。默认每 24 小时检查一次；下载和安装由用户在更新提示中选择。设置页版本号旁、应用菜单和系统菜单栏均可手动检查。检查和安装不依赖 Node.js 或 DSH；应用退出时仍由现有生命周期代码停止受管 DSH 子进程。失败后显示原因，提供重试和 GitHub Releases 入口；签名验证失败不会自动安装。源码运行不启动更新器。
+
+每次应用发布的 `CHANGELOG.md` 版本条目须写出最低兼容 DSH 版本。发布工作流将该条目复制为 Release Notes 前，校验版本号与 `AppMetadata.minimumSupportedDSHVersion` 一致；提升门槛时无需改变用户的已安装运行时目录。
 
 ### DSH 运行时更新
 

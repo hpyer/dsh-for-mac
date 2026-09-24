@@ -65,6 +65,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
         contentViewController.onUpdateAvailableVersionChanged = { [weak self] version in
             self?.updateAvailableUpdateIndicator(version: version)
         }
+        contentViewController.onRequestDSHUpgrade = { [weak self] in
+            self?.checkForDSHUpdates()
+        }
         contentViewController.onRecommendedPluginOperationStatusChanged = { [weak self] status, isInProgress in
             self?.recommendedPluginStatus = status
             self?.isRecommendedPluginOperationInProgress = isInProgress
@@ -478,7 +481,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
                 }
             )
             let settingsWindow = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 440, height: 610),
+                contentRect: NSRect(x: 0, y: 0, width: 440, height: 630),
                 styleMask: [.titled, .closable, .miniaturizable],
                 backing: .buffered,
                 defer: false

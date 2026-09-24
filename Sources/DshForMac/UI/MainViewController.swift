@@ -6,11 +6,13 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     var onUpdateCheckStatusChanged: ((String) -> Void)?
     var onUpdateAvailableVersionChanged: ((String?) -> Void)?
     var onRecommendedPluginOperationStatusChanged: ((String, Bool) -> Void)?
+    var onRequestDSHUpgrade: (() -> Void)?
 
     private let titleLabel = NSTextField(labelWithString: "DeepSeek Harness for Mac")
     private let statusLabel = NSTextField(labelWithString: "正在检测 Node.js…")
     private let detailLabel = NSTextField(wrappingLabelWithString: "")
     private let primaryButton = NSButton(title: "重新检测", target: nil, action: nil)
+    private let upgradeDSHButton = NSButton(title: "检查 DSH 更新…", target: nil, action: nil)
     private let rollbackButton = NSButton(title: "退回上一版本", target: nil, action: nil)
     private let redownloadButton = NSButton(title: "重新下载 DSH", target: nil, action: nil)
     private let chooseNodeButton = NSButton(title: "选择 Node.js 路径", target: nil, action: nil)
@@ -165,6 +167,9 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
 
         primaryButton.target = self
         primaryButton.action = #selector(primaryButtonPressed)
+        upgradeDSHButton.target = self
+        upgradeDSHButton.action = #selector(requestDSHUpgrade)
+        upgradeDSHButton.isHidden = true
         rollbackButton.target = self
         rollbackButton.action = #selector(rollbackDeepSeekHarness)
         rollbackButton.isHidden = true
@@ -179,6 +184,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
         environmentStack.addArrangedSubview(statusLabel)
         environmentStack.addArrangedSubview(detailLabel)
         environmentStack.addArrangedSubview(primaryButton)
+        environmentStack.addArrangedSubview(upgradeDSHButton)
         environmentStack.addArrangedSubview(rollbackButton)
         environmentStack.addArrangedSubview(redownloadButton)
         environmentStack.addArrangedSubview(chooseNodeButton)
@@ -315,6 +321,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     }
 
     private func showStartupError(_ error: Error) {
+        let requiresUpgrade = (error as? DSHRuntimeError)?.requiresUpgrade == true
         cancelWebRecovery()
         webAddress = nil
         activeDSHVersion = nil
@@ -325,12 +332,13 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
         redownloadButton.isEnabled = true
         chooseNodeButton.isHidden = true
         nodeWebsiteButton.isHidden = true
-        statusLabel.stringValue = "DSH 启动失败"
+        statusLabel.stringValue = requiresUpgrade ? "DSH 版本过低" : "DSH 启动失败"
         detailLabel.stringValue = error.localizedDescription
         primaryButton.title = "重新启动 DSH"
-        primaryButton.isHidden = false
-        redownloadButton.isHidden = false
-        reportServiceStatus("DSH 启动失败", isRunning: false)
+        primaryButton.isHidden = requiresUpgrade
+        redownloadButton.isHidden = requiresUpgrade
+        upgradeDSHButton.isHidden = !requiresUpgrade
+        reportServiceStatus(requiresUpgrade ? "DSH 版本过低" : "DSH 启动失败", isRunning: false)
     }
 
     private func refreshRollbackButton() {
@@ -363,6 +371,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
         primaryButton.title = "重新启动 DSH"
         primaryButton.isHidden = false
         redownloadButton.isHidden = false
+        upgradeDSHButton.isHidden = true
         reportServiceStatus("DSH 已退出（状态码 \(statusCode)）。", isRunning: false)
     }
 
@@ -510,6 +519,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
 
         if case let .ready(runtime) = status {
             primaryButton.isHidden = true
+            upgradeDSHButton.isHidden = true
             redownloadButton.isHidden = true
             chooseNodeButton.isHidden = true
             nodeWebsiteButton.isHidden = true
@@ -519,6 +529,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
             }
         } else {
             primaryButton.isHidden = false
+            upgradeDSHButton.isHidden = true
             primaryButton.title = "重新检测"
             redownloadButton.isHidden = true
             chooseNodeButton.isHidden = false
@@ -582,6 +593,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     /// restart, rather than leaving a dimmed WebView visible underneath.
     private func showStartupProgress(status: String, detail: String) {
         rollbackButton.isHidden = true
+        upgradeDSHButton.isHidden = true
         showEnvironmentView()
         statusLabel.stringValue = status
         detailLabel.stringValue = detail
@@ -706,6 +718,10 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
                 self.showStartupError(error)
             }
         }
+    }
+
+    @objc private func requestDSHUpgrade() {
+        onRequestDSHUpgrade?()
     }
 
     private func scheduleUpdateCheckIfNeeded(using runtime: NodeRuntime) {

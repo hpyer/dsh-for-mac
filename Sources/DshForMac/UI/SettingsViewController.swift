@@ -3,6 +3,7 @@ import AppKit
 final class SettingsViewController: NSViewController {
     private let statusValue = NSTextField(labelWithString: "正在读取…")
     private let runtimePopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let minimumDSHVersionLabel = NSTextField(labelWithString: "最低兼容 DSH：\(DSHCompatibility.minimumVersion)")
     private let openVersionsButton = NSButton(title: "打开目录", target: nil, action: nil)
     private let registryPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let updateIntervalPopup = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -76,6 +77,10 @@ final class SettingsViewController: NSViewController {
         statusValue.stringValue = serviceStatus
         runtimePopup.removeAllItems()
         runtimePopup.addItems(withTitles: installedVersions)
+        for item in runtimePopup.itemArray where !DSHCompatibility.supports(item.title) {
+            item.isEnabled = false
+            item.toolTip = "低于当前应用要求的 DSH \(DSHCompatibility.minimumVersion)"
+        }
         runtimePopup.isEnabled = !installedVersions.isEmpty
         if let selectedVersion = settings.selectedRuntimeVersion ?? runtimeVersion,
            let index = installedVersions.firstIndex(of: selectedVersion)
@@ -124,6 +129,8 @@ final class SettingsViewController: NSViewController {
         statusValue.textColor = .secondaryLabelColor
         statusValue.maximumNumberOfLines = 1
         runtimePopup.widthAnchor.constraint(equalToConstant: 160).isActive = true
+        minimumDSHVersionLabel.textColor = .secondaryLabelColor
+        minimumDSHVersionLabel.font = .systemFont(ofSize: 11)
         registryPopup.widthAnchor.constraint(equalToConstant: 160).isActive = true
         updateIntervalPopup.widthAnchor.constraint(equalToConstant: 160).isActive = true
         portField.stringValue = String(settings.port)
@@ -175,6 +182,10 @@ final class SettingsViewController: NSViewController {
         let runtimeControls = NSStackView(views: [runtimePopup, openVersionsButton])
         runtimeControls.orientation = .horizontal
         runtimeControls.spacing = 8
+        let runtimeVersionControls = NSStackView(views: [runtimeControls, minimumDSHVersionLabel])
+        runtimeVersionControls.orientation = .vertical
+        runtimeVersionControls.alignment = .leading
+        runtimeVersionControls.spacing = 4
         let appVersionControls = NSStackView(views: [appVersionValue, checkAppUpdatesButton])
         appVersionControls.orientation = .horizontal
         appVersionControls.spacing = 8
@@ -205,7 +216,7 @@ final class SettingsViewController: NSViewController {
             appRow,
             makeRow(label: "运行状态", value: statusValue),
             makeRow(label: "运行端口", value: portField),
-            makeRow(label: "DSH 版本", value: runtimeControls),
+            makeRow(label: "DSH 版本", value: runtimeVersionControls),
             makeRow(label: "DSH 更新", value: updateControls),
             makeRow(label: "DSH 检查标签", value: additionalTagControls),
             makeRow(label: "包下载镜像", value: registryPopup),
@@ -314,6 +325,13 @@ final class SettingsViewController: NSViewController {
             return
         }
         let version = runtimePopup.titleOfSelectedItem
+        if let version, !DSHCompatibility.supports(version) {
+            let alert = NSAlert()
+            alert.messageText = "DSH 版本过低"
+            alert.informativeText = "当前应用至少需要 DSH \(DSHCompatibility.minimumVersion)。请检查 DSH 更新并选择兼容版本。"
+            alert.runModal()
+            return
+        }
         let restartRequired = settings.port != port || settings.selectedRuntimeVersion != version
         let pluginSelections = [
             RecommendedDSHPlugin.dshMarket: dshMarketCheckbox.state == .on,

@@ -5,6 +5,44 @@ import Testing
 
 @MainActor
 struct DSHUpdateTests {
+    @Test func minimumDSHVersionHandlesPrereleaseAndStableReleases() {
+        #expect(DSHCompatibility.minimumVersion == "0.1.5-rc.1")
+        #expect(!DSHCompatibility.supports("0.1.5-alpha.2"))
+        #expect(!DSHCompatibility.supports("0.1.5-rc.0"))
+        #expect(!DSHCompatibility.supports("0.1.4"))
+        #expect(DSHCompatibility.supports("0.1.5-rc.1"))
+        #expect(DSHCompatibility.supports("0.1.5-rc.3"))
+        #expect(DSHCompatibility.supports("0.1.5"))
+        #expect(DSHCompatibility.supports("0.1.6"))
+        #expect(DSHCompatibility.supports("0.1.7-rc.1"))
+    }
+
+    @Test func incompatibleSelectedDSHIsPreservedAndNeverStarted() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let version = "0.1.5-rc.0"
+        fixture.settings.selectedRuntimeVersion = version
+        let directory = fixture.root.appendingPathComponent("DshForMac/runtimes/versions/\(version)")
+        let executable = directory.appendingPathComponent("node_modules/.bin/dsh")
+        try FileManager.default.createDirectory(at: executable.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "#!/bin/sh\nexit 0\n".write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+
+        do {
+            _ = try await fixture.manager().start(using: fixture.runtime)
+            Issue.record("Expected an incompatible version error")
+        } catch let error as DSHRuntimeError {
+            if case let .versionBelowMinimum(rejectedVersion) = error {
+                #expect(rejectedVersion == version)
+            } else {
+                Issue.record("Unexpected runtime error: \(error)")
+            }
+        }
+        #expect(FileManager.default.fileExists(atPath: executable.path))
+        #expect(fixture.settings.selectedRuntimeVersion == version)
+        #expect(!FileManager.default.fileExists(atPath: fixture.root.appendingPathComponent("commands").path))
+    }
+
     @Test func bundleIdentifierMigrationPreservesExistingPreferencesAndRunsOnce() {
         let legacyDomain = "DshForMacTests.legacy.\(UUID().uuidString)"
         let currentDomain = "DshForMacTests.current.\(UUID().uuidString)"

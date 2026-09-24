@@ -81,7 +81,7 @@ sudo xattr -rd com.apple.quarantine /Applications/DshForMac.app
 - 主窗口会记住上次的大小和位置；外接显示器断开后若原位置不可见，下次启动会将窗口移回可见区域。
 - Mac 唤醒后会检查本机 DSH 连接；确认断线时自动重试，恢复后重新加载页面。若仍无法恢复，可在页面上点击“重新连接”或使用工具栏重启 DSH。
 - 在设置中的 DshForMac 版本号旁，或菜单栏中选择“检查 DshForMac 更新”。应用自动检查每天至多一次，安装前由用户确认；若自动安装失败，可从设置打开 [GitHub 发布页面](https://github.com/hpyer/dsh-for-mac/releases)手动下载。请先将应用从 DMG 拖入“应用程序”，不要直接从 DMG 运行。
-- 通过“设置…”修改服务端口、下载镜像、DSH 版本和 DSH 更新检查频率；`latest` 始终检查，勾选启用后可额外选择 alpha、beta 或 next 标签。可打开已安装版本目录或点击“检查 DSH 更新”。每天、每周和每月检查在应用持续运行时也会到期触发；发现 DSH 新版本后工具栏立即提示，在设置的状态说明旁点击“下载”才会下载更新。
+- 通过“设置…”修改服务端口、下载镜像、DSH 版本和 DSH 更新检查频率；`latest` 始终检查，勾选启用后可额外选择 alpha、beta 或 next 标签。可打开已安装版本目录或点击“检查 DSH 更新”。每天、每周和每月检查在应用持续运行时也会到期触发；发现 DSH 新版本后工具栏立即提示，在设置的状态说明旁点击“下载”才会下载更新。设置中会显示当前应用的最低兼容 DSH 版本；若本地所选版本过低，应用会在启动前提示升级，不会因这次检查删除该版本。
 - 在“设置 → 推荐插件”中启用或禁用 DSH Market 与“拖入文件夹添加工作区”；变更会写入 DSH 的 web profile 并自动重启 DSH。
 - 当端口已被其他非 DshForMac 管理的服务占用时，请停止该服务或在设置中更换端口。
 - 点击 DSH 中的产出物文件，会在右侧以只读方式预览受支持的内容；不受支持的文件可确认后使用默认应用打开。
@@ -108,6 +108,8 @@ swift run DshForMac
 ## 自动发布
 
 推送形如 `v0.1.0` 的语义化 Git 标签会触发 GitHub Actions。工作流在 Intel 和 Apple Silicon Runner 分别构建与测试，在 macOS Runner 合成一个通用 DMG，并生成带 EdDSA 签名的 `appcast.xml`；两者共同发布到 GitHub Release。应用通过固定的 `releases/latest/download/appcast.xml` 地址检查稳定版，不调用 GitHub Releases API。预发布标签生成的 Release 不会成为默认稳定版更新源。
+
+每次发布时，`CHANGELOG.md` 对应版本条目必须包含独立一行“最低兼容 DSH 版本”，格式为 ``- 最低兼容 DSH 版本：`版本号`。``。版本号须与应用中的 `AppMetadata.minimumSupportedDSHVersion` 一致。发布工作流会校验此行，并把该版本条目原样用作 GitHub Release Notes。
 
 发布前需将与 `Packaging/Info.plist` 中 `SUPublicEDKey` 对应的 Sparkle 私钥，保存为仓库 Actions 密钥 `SPARKLE_PRIVATE_KEY`；缺失时工作流会停止发布。当前公钥对应的私钥保存在本机钥匙串账号 `cn.hpyer.dshformac` 中。已安装并登录 GitHub CLI 时，可执行：
 

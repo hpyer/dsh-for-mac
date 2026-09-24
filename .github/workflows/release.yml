@@ -52,6 +52,11 @@ jobs:
             echo "CHANGELOG.md 中未找到版本 $VERSION 的发布说明。" >&2
             exit 1
           fi
+          minimum_dsh="$(sed -nE 's/.*static let minimumSupportedDSHVersion = "([^"]+)".*/\1/p' Sources/DshForMac/Models/AppSettings.swift)"
+          if [[ -z "$minimum_dsh" ]] || ! grep -Fxq -- "- 最低兼容 DSH 版本：\`$minimum_dsh\`。" RELEASE_NOTES.md; then
+            echo "CHANGELOG.md 的 $VERSION 条目必须记录与应用一致的最低兼容 DSH 版本。" >&2
+            exit 1
+          fi
 
       - name: 上传 Release 说明
         uses: actions/upload-artifact@v4
