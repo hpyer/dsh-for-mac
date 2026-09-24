@@ -11,10 +11,8 @@ struct SemanticVersionTests {
         #expect(DSHUpdateCheckInterval.never.minimumInterval == nil)
     }
 
-    @Test func updateChannelsOfferCommonPrereleaseTags() {
-        #expect(DSHUpdateChannel.alpha.additionalTag == "alpha")
-        #expect(DSHUpdateChannel.beta.additionalTag == "beta")
-        #expect(DSHUpdateChannel.next.additionalTag == "next")
+    @Test func updateChannelsOfferPublishedPrereleaseTags() {
+        #expect(DSHUpdateChannel.allCases.map(\.additionalTag) == ["alpha", "next"])
     }
 
     @Test func findsCommonPnpmLocationsOutsideTheGuiPath() {

@@ -76,7 +76,7 @@ struct DSHUpdateTests {
         #expect(fixture.settings.updateTags == ["latest"])
         fixture.defaults.set(true, forKey: "dshAdditionalUpdateTagEnabled")
         fixture.defaults.set("beta", forKey: "dshUpdateChannel")
-        #expect(fixture.settings.updateTags == ["latest", "beta"])
+        #expect(fixture.settings.updateTags == ["latest"])
         fixture.settings.lastUpdateCheckDate = Date()
         fixture.settings.updateTags = ["next", "alpha", "alpha", "unknown"]
         #expect(fixture.settings.lastUpdateCheckDate == nil)
@@ -111,7 +111,8 @@ struct DSHUpdateTests {
         let latest = try #require(buttons.first { $0.title == "latest" })
         #expect(latest.state == .on)
         #expect(!latest.isEnabled)
-        for tag in ["alpha", "beta", "next"] {
+        #expect(buttons.first { $0.title == "beta" } == nil)
+        for tag in ["alpha", "next"] {
             let checkbox = try #require(buttons.first { $0.title == tag })
             checkbox.state = .on
             checkbox.sendAction(checkbox.action, to: checkbox.target)
@@ -128,7 +129,7 @@ struct DSHUpdateTests {
         let check = try #require(buttons.first { $0.title == "检查 DSH 更新" })
         check.sendAction(check.action, to: check.target)
         #expect(appCheckCount == 1)
-        #expect(checkedTags == ["latest", "alpha", "beta", "next"])
+        #expect(checkedTags == ["latest", "alpha", "next"])
         #expect(checkedRegistry == .npm)
         #expect(!didApply)
     }
@@ -138,7 +139,7 @@ struct DSHUpdateTests {
         defer { fixture.cleanUp() }
         fixture.settings.updateTags = ["alpha", "beta", "next"]
         _ = try await fixture.manager().checkForUpdates(using: fixture.runtime, reportsProgress: false)
-        #expect(try fixture.commands() == ["latest", "alpha", "beta", "next"].map {
+        #expect(try fixture.commands() == ["latest", "alpha", "next"].map {
             "view @deepseek-ai/dsh@\($0) version dist.integrity --json"
         })
     }

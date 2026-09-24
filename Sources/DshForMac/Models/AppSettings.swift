@@ -61,13 +61,11 @@ enum DSHUpdateCheckInterval: String, CaseIterable, Sendable {
 
 enum DSHUpdateChannel: String, CaseIterable, Sendable {
     case alpha
-    case beta
     case next
 
     var displayName: String {
         switch self {
         case .alpha: "alpha"
-        case .beta: "beta"
         case .next: "next"
         }
     }
@@ -179,9 +177,12 @@ final class AppSettings {
             if let stored = defaults.stringArray(forKey: Key.updateTags) {
                 selected = stored
             } else if defaults.bool(forKey: Key.additionalUpdateTagEnabled) {
-                let channel = defaults.string(forKey: Key.updateChannel)
-                    .flatMap(DSHUpdateChannel.init(rawValue:)) ?? .alpha
-                selected = [channel.rawValue]
+                let storedChannel = defaults.string(forKey: Key.updateChannel)
+                if let channel = storedChannel.flatMap(DSHUpdateChannel.init(rawValue:)) {
+                    selected = [channel.rawValue]
+                } else {
+                    selected = storedChannel == nil ? [DSHUpdateChannel.alpha.rawValue] : []
+                }
             } else {
                 selected = []
             }
