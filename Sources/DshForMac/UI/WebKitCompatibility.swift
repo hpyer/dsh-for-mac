@@ -50,6 +50,143 @@ enum WebKitCompatibility {
     static let script = """
     (() => {
       const needsIteratorCompatibility = typeof globalThis.Iterator === 'undefined';
+      const needsStandardCompatibility =
+        typeof Promise.withResolvers !== 'function'
+        || typeof Promise.try !== 'function'
+        || typeof globalThis.URL?.parse !== 'function'
+        || typeof RegExp.escape !== 'function'
+        || typeof Math.sumPrecise !== 'function'
+        || typeof Map.prototype.getOrInsertComputed !== 'function'
+        || typeof Map.prototype.getOrInsert !== 'function'
+        || typeof Set.prototype.intersection !== 'function'
+        || typeof Uint8Array.fromBase64 !== 'function';
+
+      // The same installer runs in the page and in DSH's bundled PDF.js worker.
+      // Keep it self-contained so its source can be prepended to the worker Blob.
+      const installStandardCompatibility = (scope) => {
+        if (typeof scope.Promise.withResolvers !== 'function') {
+          scope.Promise.withResolvers = function() {
+            let resolve, reject;
+            const promise = new this((onResolve, onReject) => {
+              resolve = onResolve;
+              reject = onReject;
+            });
+            return { promise, resolve, reject };
+          };
+        }
+
+        if (typeof scope.Promise.try !== 'function') {
+          scope.Promise.try = function(callback, ...args) {
+            return new this((resolve, reject) => {
+              try {
+                resolve(callback(...args));
+              } catch (error) {
+                reject(error);
+              }
+            });
+          };
+        }
+
+        if (typeof scope.Math.sumPrecise !== 'function') {
+          scope.Math.sumPrecise = (values) => {
+            let sum = 0;
+            let correction = 0;
+            let sawValue = false;
+            let onlyNegativeZero = true;
+            for (const value of values) {
+              if (typeof value !== 'number') throw new TypeError('Expected numbers.');
+              sawValue = true;
+              if (!Object.is(value, -0)) onlyNegativeZero = false;
+              const next = sum + value;
+              if (!Number.isFinite(next)) {
+                sum = next;
+                correction = 0;
+              } else {
+                correction += Math.abs(sum) >= Math.abs(value)
+                  ? (sum - next) + value : (value - next) + sum;
+                sum = next;
+              }
+            }
+            if (!sawValue || onlyNegativeZero) return -0;
+            return sum + correction;
+          };
+        }
+
+        if (typeof scope.URL === 'function' && typeof scope.URL.parse !== 'function') {
+          scope.URL.parse = function(input, base) {
+            try {
+              return base === undefined ? new this(input) : new this(input, base);
+            } catch (_) {
+              return null;
+            }
+          };
+        }
+
+        if (typeof scope.Map.prototype.getOrInsert !== 'function') {
+          scope.Map.prototype.getOrInsert = function(key, defaultValue) {
+            if (this.has(key)) return this.get(key);
+            this.set(key, defaultValue);
+            return defaultValue;
+          };
+        }
+
+        if (typeof scope.Map.prototype.getOrInsertComputed !== 'function') {
+          scope.Map.prototype.getOrInsertComputed = function(key, callback) {
+            if (this.has(key)) return this.get(key);
+            const value = callback(key);
+            this.set(key, value);
+            return value;
+          };
+        }
+
+        if (typeof scope.Set.prototype.intersection !== 'function') {
+          scope.Set.prototype.intersection = function(other) {
+            const result = new scope.Set();
+            for (const value of this) {
+              if (other.has(value)) result.add(value);
+            }
+            return result;
+          };
+        }
+
+        if (typeof scope.RegExp.escape !== 'function') {
+          scope.RegExp.escape = (value) => {
+            const slash = String.fromCharCode(92);
+            return Array.from(String(value), (character, index) => {
+              const code = character.charCodeAt(0);
+              const hex = code.toString(16).padStart(2, '0');
+              if (index === 0 && ((code >= 48 && code <= 57)
+                  || (code >= 65 && code <= 90) || (code >= 97 && code <= 122))) {
+                return slash + 'x' + hex;
+              }
+              if (character === slash || '^$.*+?()[]{}|/'.includes(character)) {
+                return slash + character;
+              }
+              if (',-=<>#&!%:;@~'.includes(character) || code === 34
+                  || code === 39 || code === 96 || code === 32) {
+                return slash + 'x' + hex;
+              }
+              if (code === 10) return slash + 'n';
+              if (code === 13) return slash + 'r';
+              if (code === 9) return slash + 't';
+              if (code === 11) return slash + 'v';
+              if (code === 12) return slash + 'f';
+              if (character.trim() === '') {
+                return slash + 'u' + code.toString(16).padStart(4, '0');
+              }
+              return character;
+            }).join('');
+          };
+        }
+
+        if (typeof scope.Uint8Array.fromBase64 !== 'function' && typeof scope.atob === 'function') {
+          scope.Uint8Array.fromBase64 = (value) => {
+            const decoded = scope.atob(value);
+            return scope.Uint8Array.from(decoded, (character) => character.charCodeAt(0));
+          };
+        }
+      };
+
       const installIteratorCompatibility = (scope) => {
         if (typeof scope.Iterator !== 'undefined') return;
 
@@ -68,14 +205,17 @@ enum WebKitCompatibility {
         });
       };
 
+      installStandardCompatibility(globalThis);
       installIteratorCompatibility(globalThis);
 
       // DSH's document preview creates its bundled PDF.js worker from a
       // JavaScript Blob. User scripts do not run in workers, so prepend the
-      // same small Iterator shim only to that recognisable worker payload.
-      if (needsIteratorCompatibility && typeof Blob === 'function') {
+      // missing APIs only to that recognisable worker payload.
+      if ((needsIteratorCompatibility || needsStandardCompatibility) && typeof Blob === 'function') {
         const NativeBlob = Blob;
-        const workerIteratorScript = `(${installIteratorCompatibility.toString()})(globalThis);\n`;
+        const workerCompatibilityScript =
+          `(${installStandardCompatibility.toString()})(globalThis);\n`
+          + `(${installIteratorCompatibility.toString()})(globalThis);\n`;
         globalThis.Blob = class Blob extends NativeBlob {
           constructor(parts, options) {
             const isDSHPDFWorker = options?.type === 'text/javascript'
@@ -83,7 +223,7 @@ enum WebKitCompatibility {
               && parts.some((part) => typeof part === 'string'
                 && part.includes('globalThis.pdfjsWorker')
                 && part.includes('Iterator.prototype.join'));
-            super(isDSHPDFWorker ? [workerIteratorScript, ...parts] : parts, options);
+            super(isDSHPDFWorker ? [workerCompatibilityScript, ...parts] : parts, options);
           }
         };
       }

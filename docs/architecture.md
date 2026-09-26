@@ -98,7 +98,7 @@ DSH 0.1.6 的 xterm DOM 渲染器只指定普通等宽字体。WebView 在文档
 ## WebView 与预览安全
 
 - 内嵌 WebView 只允许加载配置端口的 `http://127.0.0.1` DSH 服务；其他链接或文件需要用户确认后才交给浏览器或默认应用。
-- 在加载本机 DSH 页面前，WebView 会为缺失的 `Iterator`、`AbortSignal.timeout` 和 `AbortSignal.any` 注入兼容实现，以支持 macOS 13 及更早系统自带的 WebKit；DSH 文档预览创建的 PDF Worker 也会获得同一份 `Iterator` 兼容实现，系统已提供时不会覆盖原生实现。
+- 在加载本机 DSH 页面前，WebView 会补齐 macOS 13 等旧版 WebKit 缺失、但新版 DSH 会话和 PDF 预览使用的 JavaScript API，包括 `Promise.withResolvers`、`Promise.try`、`URL.parse`、`RegExp.escape`、`Math.sumPrecise`、`Map.getOrInsert*`、`Set.intersection`、`Uint8Array.fromBase64`、`Iterator` 和 `AbortSignal.any/timeout`。DSH 文档预览创建的 PDF Worker 也会获得所需兼容实现，系统已提供时不会覆盖原生实现。
 - 产出物桥接只接受用户触发的请求，并使用每次应用启动生成的私有令牌校验消息。
 - 文件夹工作区桥接只接受已加载 `dsh-workspace-drop2add` 插件的随机令牌，并且只接受左侧栏中的单个本地目录；它不会把路径注入普通对话附件的拖放流程。
 - 任务提醒桥接只接受本机 DSH 主框架、当前插件令牌和有限长度的会话标识；点击提醒时仅向本机 WebView 传回会话 ID。

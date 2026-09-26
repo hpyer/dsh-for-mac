@@ -89,7 +89,65 @@ import Testing
         #expect(context.evaluateScript("Iterator === originalIterator")?.toBool() == true)
     }
 
-    @Test func prependsTheIteratorShimOnlyToTheDSHPDFWorker() throws {
+    @Test func suppliesStandardAPIsUsedBySessionsAndPDFPreview() throws {
+        let context = try #require(JSContext())
+        context.evaluateScript(
+            """
+            Promise.withResolvers = undefined;
+            Promise.try = undefined;
+            globalThis.URL = class URL {
+              constructor(input, base) {
+                if (input === 'bad') throw new TypeError('invalid URL');
+                this.href = base ? base + input : input;
+              }
+            };
+            RegExp.escape = undefined;
+            Math.sumPrecise = undefined;
+            Map.prototype.getOrInsert = undefined;
+            Map.prototype.getOrInsertComputed = undefined;
+            Set.prototype.intersection = undefined;
+            Uint8Array.fromBase64 = undefined;
+            globalThis.atob = (value) => value === 'AQID' ? String.fromCharCode(1, 2, 3) : '';
+            """
+        )
+        context.evaluateScript(WebKitCompatibility.script)
+
+        #expect(context.exception == nil)
+        let result = context.evaluateScript(
+            """
+            (() => {
+              const deferred = Promise.withResolvers();
+              const map = new Map([['present', 0]]);
+              let computed = 0;
+              const existing = map.getOrInsertComputed('present', () => ++computed);
+              const inserted = map.getOrInsertComputed('missing', (key) => key.length);
+              const bytes = Uint8Array.fromBase64('AQID');
+              return JSON.stringify({
+                deferred: deferred.promise instanceof Promise
+                  && typeof deferred.resolve === 'function'
+                  && typeof deferred.reject === 'function',
+                promiseTry: Promise.try((a, b) => a + b, 2, 3) instanceof Promise,
+                preciseSum: Math.sumPrecise([1e16, 1, -1e16]),
+                emptySum: Object.is(Math.sumPrecise([]), -0),
+                url: URL.parse('child', 'base/').href,
+                invalidURL: URL.parse('bad') === null,
+                existing, inserted, computed,
+                defaultValue: map.getOrInsert('present', 9),
+                intersection: Array.from(new Set([1, 2, 3]).intersection(new Set([2, 3, 4]))),
+                escaped: new RegExp(RegExp.escape('a-b.c[1]')).test('a-b.c[1]'),
+                notOvermatched: !new RegExp(RegExp.escape('a-b.c[1]')).test('axbxc1'),
+                bytes: Array.from(bytes)
+              });
+            })();
+            """
+        )
+        #expect(
+            result?.toString()
+                == #"{"deferred":true,"promiseTry":true,"preciseSum":1,"emptySum":true,"url":"base/child","invalidURL":true,"existing":0,"inserted":7,"computed":0,"defaultValue":0,"intersection":[2,3],"escaped":true,"notOvermatched":true,"bytes":[1,2,3]}"#
+        )
+    }
+
+    @Test func prependsCompatibilityOnlyToTheDSHPDFWorker() throws {
         let context = try #require(JSContext())
         context.evaluateScript(
             """
@@ -107,7 +165,7 @@ import Testing
         #expect(context.exception == nil)
         let result = context.evaluateScript(
             """
-            const pdf = new Blob(
+            globalThis.pdf = new Blob(
               ['Iterator.prototype.join; globalThis.pdfjsWorker = {};'],
               { type: 'text/javascript' }
             );
@@ -115,6 +173,7 @@ import Testing
             JSON.stringify({
               pdfParts: pdf.parts.length,
               pdfHasShim: pdf.parts[0].includes("Object.defineProperty(scope, 'Iterator'"),
+              pdfHasPromiseShim: pdf.parts[0].includes('scope.Promise.withResolvers'),
               ordinaryParts: ordinary.parts.length,
               ordinarySource: ordinary.parts[0]
             });
@@ -122,7 +181,32 @@ import Testing
         )
         #expect(
             result?.toString()
-                == #"{"pdfParts":2,"pdfHasShim":true,"ordinaryParts":1,"ordinarySource":"ordinary worker"}"#
+                == #"{"pdfParts":2,"pdfHasShim":true,"pdfHasPromiseShim":true,"ordinaryParts":1,"ordinarySource":"ordinary worker"}"#
+        )
+
+        let workerSource = try #require(context.evaluateScript("pdf.parts[0]")?.toString())
+        let worker = try #require(JSContext())
+        worker.evaluateScript(
+            """
+            globalThis.Iterator = undefined;
+            globalThis.URL = class URL { constructor(value) { this.href = value; } };
+            globalThis.atob = () => String.fromCharCode(1);
+            """
+        )
+        worker.evaluateScript(workerSource)
+        #expect(worker.exception == nil)
+        #expect(
+            worker.evaluateScript(
+                """
+                typeof Iterator === 'function'
+                  && typeof Promise.withResolvers === 'function'
+                  && typeof Promise.try === 'function'
+                  && typeof URL.parse === 'function'
+                  && typeof Map.prototype.getOrInsertComputed === 'function'
+                  && typeof Set.prototype.intersection === 'function'
+                  && typeof Uint8Array.fromBase64 === 'function'
+                """
+            )?.toBool() == true
         )
     }
 }
