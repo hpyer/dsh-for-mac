@@ -207,10 +207,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
         restartItem.target = self
         menu.addItem(restartItem)
 
-        let settingsItem = NSMenuItem(title: "设置…", action: #selector(showSettings), keyEquivalent: ",")
-        settingsItem.keyEquivalentModifierMask = .command
-        settingsItem.target = self
-        menu.addItem(settingsItem)
+        menu.addItem(settingsMenuItem())
         menu.addItem(.separator())
 
         let checkDSHUpdatesItem = NSMenuItem(
@@ -245,14 +242,19 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
         item.isEnabled = true
     }
 
+    private func settingsMenuItem() -> NSMenuItem {
+        let item = NSMenuItem(title: "设置…", action: #selector(showSettings), keyEquivalent: ",")
+        item.keyEquivalentModifierMask = [.command, .shift]
+        item.target = self
+        return item
+    }
+
     private func configureMainMenu() {
         let mainMenu = NSMenu()
 
         let applicationMenuItem = NSMenuItem()
         let applicationMenu = NSMenu(title: "DshForMac")
-        let settingsItem = NSMenuItem(title: "设置…", action: #selector(showSettings), keyEquivalent: ",")
-        settingsItem.target = self
-        applicationMenu.addItem(settingsItem)
+        applicationMenu.addItem(settingsMenuItem())
         let checkAppUpdatesItem = NSMenuItem(
             title: "检查 DshForMac 更新…",
             action: #selector(checkForAppUpdates),
