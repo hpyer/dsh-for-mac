@@ -158,7 +158,7 @@ final class TaskReminderController: NSObject {
         activeReminder = reminder
         panel.orderFrontRegardless()
         toastTimer = Timer.scheduledTimer(withTimeInterval: 8, repeats: false) { [weak self] _ in
-            Task { @MainActor in self?.dismissToast() }
+            Task { @MainActor [weak self] in self?.dismissToast() }
         }
     }
 

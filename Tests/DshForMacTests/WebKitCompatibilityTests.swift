@@ -1,10 +1,10 @@
 import JavaScriptCore
-import Testing
+import XCTest
 @testable import DshForMac
 
-@Suite struct WebKitCompatibilityTests {
-    @Test func keepsModelMenuButtonsMountedDuringMousePress() throws {
-        let context = try #require(JSContext())
+final class WebKitCompatibilityTests: XCTestCase {
+    func testKeepsModelMenuButtonsMountedDuringMousePress() throws {
+        let context = try XCTUnwrap(JSContext())
         context.evaluateScript(
             """
             globalThis.Element = class Element {
@@ -33,7 +33,7 @@ import Testing
         )
         context.evaluateScript(WebKitCompatibility.modelSelectionMouseScript)
 
-        #expect(context.exception == nil)
+        XCTAssertTrue(context.exception == nil)
         let result = context.evaluateScript(
             """
             function press(label, tag = 'button') {
@@ -54,29 +54,29 @@ import Testing
             });
             """
         )
-        #expect(
+        XCTAssertTrue(
             result?.toString()
                 == #"{"event":"mousedown","capture":true,"chineseModel":true,"englishModel":true,"otherMenu":false,"nonButton":false}"#
         )
     }
 
-    @Test func installsIteratorOnTheSharedIteratorPrototype() throws {
-        let context = try #require(JSContext())
+    func testInstallsIteratorOnTheSharedIteratorPrototype() throws {
+        let context = try XCTUnwrap(JSContext())
         context.evaluateScript("globalThis.Iterator = undefined")
         context.evaluateScript(WebKitCompatibility.script)
 
-        #expect(context.exception == nil)
+        XCTAssertTrue(context.exception == nil)
         let result = context.evaluateScript(
             """
             Iterator.prototype.join = function(separator) { return [...this].join(separator); };
             [1, 2, 3].values().join('-');
             """
         )
-        #expect(result?.toString() == "1-2-3")
+        XCTAssertTrue(result?.toString() == "1-2-3")
     }
 
-    @Test func preservesAnExistingIteratorImplementation() throws {
-        let context = try #require(JSContext())
+    func testPreservesAnExistingIteratorImplementation() throws {
+        let context = try XCTUnwrap(JSContext())
         context.evaluateScript(
             """
             globalThis.Iterator = function NativeIterator() {};
@@ -85,12 +85,12 @@ import Testing
         )
         context.evaluateScript(WebKitCompatibility.script)
 
-        #expect(context.exception == nil)
-        #expect(context.evaluateScript("Iterator === originalIterator")?.toBool() == true)
+        XCTAssertTrue(context.exception == nil)
+        XCTAssertTrue(context.evaluateScript("Iterator === originalIterator")?.toBool() == true)
     }
 
-    @Test func suppliesStandardAPIsUsedBySessionsAndPDFPreview() throws {
-        let context = try #require(JSContext())
+    func testSuppliesStandardAPIsUsedBySessionsAndPDFPreview() throws {
+        let context = try XCTUnwrap(JSContext())
         context.evaluateScript(
             """
             Promise.withResolvers = undefined;
@@ -112,7 +112,7 @@ import Testing
         )
         context.evaluateScript(WebKitCompatibility.script)
 
-        #expect(context.exception == nil)
+        XCTAssertTrue(context.exception == nil)
         let result = context.evaluateScript(
             """
             (() => {
@@ -141,14 +141,14 @@ import Testing
             })();
             """
         )
-        #expect(
+        XCTAssertTrue(
             result?.toString()
                 == #"{"deferred":true,"promiseTry":true,"preciseSum":1,"emptySum":true,"url":"base/child","invalidURL":true,"existing":0,"inserted":7,"computed":0,"defaultValue":0,"intersection":[2,3],"escaped":true,"notOvermatched":true,"bytes":[1,2,3]}"#
         )
     }
 
-    @Test func prependsCompatibilityOnlyToTheDSHPDFWorker() throws {
-        let context = try #require(JSContext())
+    func testPrependsCompatibilityOnlyToTheDSHPDFWorker() throws {
+        let context = try XCTUnwrap(JSContext())
         context.evaluateScript(
             """
             globalThis.Iterator = undefined;
@@ -162,7 +162,7 @@ import Testing
         )
         context.evaluateScript(WebKitCompatibility.script)
 
-        #expect(context.exception == nil)
+        XCTAssertTrue(context.exception == nil)
         let result = context.evaluateScript(
             """
             globalThis.pdf = new Blob(
@@ -179,13 +179,13 @@ import Testing
             });
             """
         )
-        #expect(
+        XCTAssertTrue(
             result?.toString()
                 == #"{"pdfParts":2,"pdfHasShim":true,"pdfHasPromiseShim":true,"ordinaryParts":1,"ordinarySource":"ordinary worker"}"#
         )
 
-        let workerSource = try #require(context.evaluateScript("pdf.parts[0]")?.toString())
-        let worker = try #require(JSContext())
+        let workerSource = try XCTUnwrap(context.evaluateScript("pdf.parts[0]")?.toString())
+        let worker = try XCTUnwrap(JSContext())
         worker.evaluateScript(
             """
             globalThis.Iterator = undefined;
@@ -194,8 +194,8 @@ import Testing
             """
         )
         worker.evaluateScript(workerSource)
-        #expect(worker.exception == nil)
-        #expect(
+        XCTAssertTrue(worker.exception == nil)
+        XCTAssertTrue(
             worker.evaluateScript(
                 """
                 typeof Iterator === 'function'

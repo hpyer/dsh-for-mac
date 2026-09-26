@@ -1,11 +1,11 @@
 import AppKit
-import Testing
+import XCTest
 import WebKit
 @testable import DshForMac
 
 @MainActor
-struct TerminalFontTests {
-    @Test func scopesSymbolFallbackToTerminalAndPreservesASCIIMetrics() async throws {
+final class TerminalFontTests: XCTestCase {
+    func testScopesSymbolFallbackToTerminalAndPreservesASCIIMetrics() async throws {
         let configuration = WKWebViewConfiguration()
         configuration.userContentController.addUserScript(WKUserScript(
             source: WebKitCompatibility.terminalFontScript,
@@ -24,7 +24,7 @@ struct TerminalFontTests {
             if !webView.isLoading { break }
             try await Task.sleep(nanoseconds: 10_000_000)
         }
-        #expect(!webView.isLoading)
+        XCTAssertTrue(!webView.isLoading)
         let result = try await webView.evaluateJavaScript("""
         (() => {
           const original = document.getElementById('original');
@@ -36,10 +36,10 @@ struct TerminalFontTests {
           };
         })()
         """)
-        let values = try #require(result as? [String: Bool])
-        #expect(values["scoped"] == true)
-        #expect(values["applied"] == true)
-        #expect(values["sameWidth"] == true)
+        let values = try XCTUnwrap(result as? [String: Bool])
+        XCTAssertTrue(values["scoped"] == true)
+        XCTAssertTrue(values["applied"] == true)
+        XCTAssertTrue(values["sameWidth"] == true)
 
         // When the user's font is installed, verify WebKit can actually load it.
         if NSFont(name: "MesloLGS NF", size: 13) != nil {
@@ -51,7 +51,7 @@ struct TerminalFontTests {
                     continuation.resume(with: result.map { ($0 as? Int) ?? 0 })
                 }
             }
-            #expect(loaded == 1)
+            XCTAssertTrue(loaded == 1)
         }
     }
 }

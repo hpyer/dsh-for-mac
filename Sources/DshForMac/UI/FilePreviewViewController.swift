@@ -461,7 +461,7 @@ final class FilePreviewViewController: NSViewController, WKNavigationDelegate {
     func webView(
         _ webView: WKWebView,
         decidePolicyFor navigationAction: WKNavigationAction,
-        decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
+        decisionHandler: @escaping NavigationActionDecisionHandler
     ) {
         let allowsInitialDocumentLoad = navigationAction.navigationType == .other
             && navigationAction.request.url?.scheme == "about"

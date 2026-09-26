@@ -1,33 +1,33 @@
 import AppKit
 import Foundation
-import Testing
+import XCTest
 @testable import DshForMac
 
 @MainActor
-struct DSHUpdateTests {
-    @Test func notificationBridgeHasItsOwnMinimumDSHVersion() {
+final class DSHUpdateTests: XCTestCase {
+    func testNotificationBridgeHasItsOwnMinimumDSHVersion() {
         let plugin = RecommendedDSHPlugin.taskNotifications
-        #expect(plugin.minimumDSHVersion == "0.1.5-rc.3")
-        #expect(!plugin.supportsDSHVersion("0.1.5-rc.1"))
-        #expect(!plugin.supportsDSHVersion("0.1.5-rc.2"))
-        #expect(plugin.supportsDSHVersion("0.1.5-rc.3"))
-        #expect(plugin.supportsDSHVersion("0.1.5"))
-        #expect(plugin.supportsDSHVersion("0.1.7-rc.1"))
+        XCTAssertTrue(plugin.minimumDSHVersion == "0.1.5-rc.3")
+        XCTAssertTrue(!plugin.supportsDSHVersion("0.1.5-rc.1"))
+        XCTAssertTrue(!plugin.supportsDSHVersion("0.1.5-rc.2"))
+        XCTAssertTrue(plugin.supportsDSHVersion("0.1.5-rc.3"))
+        XCTAssertTrue(plugin.supportsDSHVersion("0.1.5"))
+        XCTAssertTrue(plugin.supportsDSHVersion("0.1.7-rc.1"))
     }
 
-    @Test func minimumDSHVersionHandlesPrereleaseAndStableReleases() {
-        #expect(DSHCompatibility.minimumVersion == "0.1.5-rc.1")
-        #expect(!DSHCompatibility.supports("0.1.5-alpha.2"))
-        #expect(!DSHCompatibility.supports("0.1.5-rc.0"))
-        #expect(!DSHCompatibility.supports("0.1.4"))
-        #expect(DSHCompatibility.supports("0.1.5-rc.1"))
-        #expect(DSHCompatibility.supports("0.1.5-rc.3"))
-        #expect(DSHCompatibility.supports("0.1.5"))
-        #expect(DSHCompatibility.supports("0.1.6"))
-        #expect(DSHCompatibility.supports("0.1.7-rc.1"))
+    func testMinimumDSHVersionHandlesPrereleaseAndStableReleases() {
+        XCTAssertTrue(DSHCompatibility.minimumVersion == "0.1.5-rc.1")
+        XCTAssertTrue(!DSHCompatibility.supports("0.1.5-alpha.2"))
+        XCTAssertTrue(!DSHCompatibility.supports("0.1.5-rc.0"))
+        XCTAssertTrue(!DSHCompatibility.supports("0.1.4"))
+        XCTAssertTrue(DSHCompatibility.supports("0.1.5-rc.1"))
+        XCTAssertTrue(DSHCompatibility.supports("0.1.5-rc.3"))
+        XCTAssertTrue(DSHCompatibility.supports("0.1.5"))
+        XCTAssertTrue(DSHCompatibility.supports("0.1.6"))
+        XCTAssertTrue(DSHCompatibility.supports("0.1.7-rc.1"))
     }
 
-    @Test func incompatibleSelectedDSHIsPreservedAndNeverStarted() async throws {
+    func testIncompatibleSelectedDSHIsPreservedAndNeverStarted() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanUp() }
         let version = "0.1.5-rc.0"
@@ -40,20 +40,20 @@ struct DSHUpdateTests {
 
         do {
             _ = try await fixture.manager().start(using: fixture.runtime)
-            Issue.record("Expected an incompatible version error")
+            XCTFail("Expected an incompatible version error")
         } catch let error as DSHRuntimeError {
             if case let .versionBelowMinimum(rejectedVersion) = error {
-                #expect(rejectedVersion == version)
+                XCTAssertTrue(rejectedVersion == version)
             } else {
-                Issue.record("Unexpected runtime error: \(error)")
+                XCTFail("Unexpected runtime error: \(error)")
             }
         }
-        #expect(FileManager.default.fileExists(atPath: executable.path))
-        #expect(fixture.settings.selectedRuntimeVersion == version)
-        #expect(!FileManager.default.fileExists(atPath: fixture.root.appendingPathComponent("commands").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: executable.path))
+        XCTAssertTrue(fixture.settings.selectedRuntimeVersion == version)
+        XCTAssertTrue(!FileManager.default.fileExists(atPath: fixture.root.appendingPathComponent("commands").path))
     }
 
-    @Test func bundleIdentifierMigrationPreservesExistingPreferencesAndRunsOnce() {
+    func testBundleIdentifierMigrationPreservesExistingPreferencesAndRunsOnce() {
         let legacyDomain = "DshForMacTests.legacy.\(UUID().uuidString)"
         let currentDomain = "DshForMacTests.current.\(UUID().uuidString)"
         let defaults = UserDefaults.standard
@@ -70,32 +70,32 @@ struct DSHUpdateTests {
         AppSettings.migratePreferences(in: defaults, from: legacyDomain, to: currentDomain)
 
         let migrated = defaults.persistentDomain(forName: currentDomain)
-        #expect(migrated?["dshPort"] as? Int == 5000)
-        #expect(migrated?["packageRegistry"] as? String == PackageRegistry.npm.rawValue)
+        XCTAssertTrue(migrated?["dshPort"] as? Int == 5000)
+        XCTAssertTrue(migrated?["packageRegistry"] as? String == PackageRegistry.npm.rawValue)
 
         var changed = migrated ?? [:]
         changed.removeValue(forKey: "packageRegistry")
         defaults.setPersistentDomain(changed, forName: currentDomain)
         AppSettings.migratePreferences(in: defaults, from: legacyDomain, to: currentDomain)
-        #expect(defaults.persistentDomain(forName: currentDomain)?["packageRegistry"] == nil)
+        XCTAssertTrue(defaults.persistentDomain(forName: currentDomain)?["packageRegistry"] == nil)
     }
 
-    @Test func updateTagsPreserveLegacySelectionAndAlwaysIncludeLatest() throws {
+    func testUpdateTagsPreserveLegacySelectionAndAlwaysIncludeLatest() throws {
         let fixture = try Fixture()
         defer { fixture.cleanUp() }
-        #expect(fixture.settings.updateTags == ["latest"])
+        XCTAssertTrue(fixture.settings.updateTags == ["latest"])
         fixture.defaults.set(true, forKey: "dshAdditionalUpdateTagEnabled")
         fixture.defaults.set("beta", forKey: "dshUpdateChannel")
-        #expect(fixture.settings.updateTags == ["latest"])
+        XCTAssertTrue(fixture.settings.updateTags == ["latest"])
         fixture.settings.lastUpdateCheckDate = Date()
         fixture.settings.updateTags = ["next", "alpha", "alpha", "unknown"]
-        #expect(fixture.settings.lastUpdateCheckDate == nil)
-        #expect(AppSettings(defaults: fixture.defaults).updateTags == ["latest", "alpha", "next"])
+        XCTAssertTrue(fixture.settings.lastUpdateCheckDate == nil)
+        XCTAssertTrue(AppSettings(defaults: fixture.defaults).updateTags == ["latest", "alpha", "next"])
         fixture.settings.updateTags = []
-        #expect(AppSettings(defaults: fixture.defaults).updateTags == ["latest"])
+        XCTAssertTrue(AppSettings(defaults: fixture.defaults).updateTags == ["latest"])
     }
 
-    @Test func settingsControlsApplySourcesBeforeCheckingWithoutSaving() throws {
+    func testSettingsControlsApplySourcesBeforeCheckingWithoutSaving() throws {
         _ = NSApplication.shared
         let fixture = try Fixture()
         defer { fixture.cleanUp() }
@@ -124,45 +124,45 @@ struct DSHUpdateTests {
         }
         let views = descendants(controller.view)
         let buttons = views.compactMap { $0 as? NSButton }
-        let reminderCheckbox = try #require(buttons.first { $0.title == "后台任务提醒" })
-        let testReminder = try #require(buttons.first { $0.title == "发送测试提醒" })
-        #expect(!testReminder.isEnabled)
+        let reminderCheckbox = try XCTUnwrap(buttons.first { $0.title == "后台任务提醒" })
+        let testReminder = try XCTUnwrap(buttons.first { $0.title == "发送测试提醒" })
+        XCTAssertTrue(!testReminder.isEnabled)
         reminderCheckbox.state = .on
         reminderCheckbox.sendAction(reminderCheckbox.action, to: reminderCheckbox.target)
-        #expect(testReminder.isEnabled)
+        XCTAssertTrue(testReminder.isEnabled)
         testReminder.sendAction(testReminder.action, to: testReminder.target)
-        #expect(testReminderCount == 1)
+        XCTAssertTrue(testReminderCount == 1)
         reminderCheckbox.state = .off
         reminderCheckbox.sendAction(reminderCheckbox.action, to: reminderCheckbox.target)
-        #expect(!testReminder.isEnabled)
-        let latest = try #require(buttons.first { $0.title == "latest" })
-        #expect(latest.state == .on)
-        #expect(!latest.isEnabled)
-        #expect(buttons.first { $0.title == "beta" } == nil)
+        XCTAssertTrue(!testReminder.isEnabled)
+        let latest = try XCTUnwrap(buttons.first { $0.title == "latest" })
+        XCTAssertTrue(latest.state == .on)
+        XCTAssertTrue(!latest.isEnabled)
+        XCTAssertTrue(buttons.first { $0.title == "beta" } == nil)
         for tag in ["alpha", "next"] {
-            let checkbox = try #require(buttons.first { $0.title == tag })
+            let checkbox = try XCTUnwrap(buttons.first { $0.title == tag })
             checkbox.state = .on
             checkbox.sendAction(checkbox.action, to: checkbox.target)
         }
-        let registry = try #require(views.compactMap { $0 as? NSPopUpButton }.first {
+        let registry = try XCTUnwrap(views.compactMap { $0 as? NSPopUpButton }.first {
             $0.itemTitles.contains(PackageRegistry.npm.displayName)
         })
         registry.selectItem(withTitle: PackageRegistry.npm.displayName)
         registry.sendAction(registry.action, to: registry.target)
-        let appCheck = try #require(buttons.first { $0.title == "检查应用更新" })
+        let appCheck = try XCTUnwrap(buttons.first { $0.title == "检查应用更新" })
         appCheck.sendAction(appCheck.action, to: appCheck.target)
-        #expect(appCheckCount == 1)
-        #expect(checkedTags.isEmpty)
-        let check = try #require(buttons.first { $0.title == "检查 DSH 更新" })
-        #expect((check.superview as? NSStackView)?.arrangedSubviews.contains {
+        XCTAssertTrue(appCheckCount == 1)
+        XCTAssertTrue(checkedTags.isEmpty)
+        let check = try XCTUnwrap(buttons.first { $0.title == "检查 DSH 更新" })
+        XCTAssertTrue((check.superview as? NSStackView)?.arrangedSubviews.contains {
             ($0 as? NSTextField)?.stringValue == "正在读取…"
         } == true)
-        #expect(!views.compactMap { $0 as? NSTextField }.contains { ["应用", "DSH"].contains($0.stringValue) })
+        XCTAssertTrue(!views.compactMap { $0 as? NSTextField }.contains { ["应用", "DSH"].contains($0.stringValue) })
         check.sendAction(check.action, to: check.target)
-        #expect(appCheckCount == 1)
-        #expect(checkedTags == ["latest", "alpha", "next"])
-        #expect(checkedRegistry == .npm)
-        #expect(!didApply)
+        XCTAssertTrue(appCheckCount == 1)
+        XCTAssertTrue(checkedTags == ["latest", "alpha", "next"])
+        XCTAssertTrue(checkedRegistry == .npm)
+        XCTAssertTrue(!didApply)
 
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: SettingsViewController.preferredWidth, height: 650),
                               styleMask: [.titled, .closable], backing: .buffered, defer: false)
@@ -173,98 +173,98 @@ struct DSHUpdateTests {
                           installedVersions: ["0.1.7-rc.1"], updateCheckStatus: "DSH 已是最新版本。",
                           canDownloadUpdate: false, isUpdateOperationInProgress: false,
                           recommendedPlugins: [], pluginStatus: "", isPluginOperationInProgress: false)
-        let result = try #require(descendants(controller.view).compactMap { $0 as? NSTextField }.first {
+        let result = try XCTUnwrap(descendants(controller.view).compactMap { $0 as? NSTextField }.first {
             $0.stringValue == "DSH 已是最新版本。"
         })
-        #expect(check.superview?.superview === result.superview?.superview)
+        XCTAssertTrue(check.superview?.superview === result.superview?.superview)
         window.contentView?.layoutSubtreeIfNeeded()
         let appButtonX = appCheck.convert(.zero, to: controller.view).x
         let dshButtonX = check.convert(.zero, to: controller.view).x
-        #expect(abs(appButtonX - dshButtonX) < 1)
-        let save = try #require(buttons.first { $0.title == "保存" })
+        XCTAssertTrue(abs(appButtonX - dshButtonX) < 1)
+        let save = try XCTUnwrap(buttons.first { $0.title == "保存" })
         save.sendAction(save.action, to: save.target)
-        #expect(didApply)
-        #expect(!didRequestRestart)
-        #expect(window.isVisible)
-        let close = try #require(buttons.first { $0.title == "关闭" })
+        XCTAssertTrue(didApply)
+        XCTAssertTrue(!didRequestRestart)
+        XCTAssertTrue(window.isVisible)
+        let close = try XCTUnwrap(buttons.first { $0.title == "关闭" })
         close.sendAction(close.action, to: close.target)
-        #expect(!window.isVisible)
+        XCTAssertTrue(!window.isVisible)
     }
 
-    @Test func checksEverySelectedTag() async throws {
+    func testChecksEverySelectedTag() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanUp() }
         fixture.settings.updateTags = ["alpha", "beta", "next"]
         _ = try await fixture.manager().checkForUpdates(using: fixture.runtime, reportsProgress: false)
-        #expect(try fixture.commands() == ["latest", "alpha", "next"].map {
+        XCTAssertTrue(try fixture.commands() == ["latest", "alpha", "next"].map {
             "view @deepseek-ai/dsh@\($0) version dist.integrity --json"
         })
     }
 
-    @Test func periodicChecksBecomeDueWhileApplicationRemainsOpen() throws {
+    func testPeriodicChecksBecomeDueWhileApplicationRemainsOpen() throws {
         let fixture = try Fixture()
         defer { fixture.cleanUp() }
         let checkedAt = Date(timeIntervalSince1970: 1_000_000)
         for interval in [DSHUpdateCheckInterval.daily, .weekly, .monthly] {
             fixture.settings.updateCheckInterval = interval
             fixture.settings.lastUpdateCheckDate = checkedAt
-            let elapsed = try #require(interval.minimumInterval)
-            #expect(!fixture.settings.shouldCheckForUpdates(
+            let elapsed = try XCTUnwrap(interval.minimumInterval)
+            XCTAssertTrue(!fixture.settings.shouldCheckForUpdates(
                 now: checkedAt.addingTimeInterval(elapsed - 1), isApplicationLaunch: false
             ))
-            #expect(fixture.settings.shouldCheckForUpdates(
+            XCTAssertTrue(fixture.settings.shouldCheckForUpdates(
                 now: checkedAt.addingTimeInterval(elapsed), isApplicationLaunch: false
             ))
-            #expect(fixture.settings.shouldCheckForUpdates(
+            XCTAssertTrue(fixture.settings.shouldCheckForUpdates(
                 now: checkedAt.addingTimeInterval(elapsed * 2), isApplicationLaunch: false
             ))
         }
     }
 
-    @Test func launchOnlyAndNeverDoNotRunOnActivationOrTimer() throws {
+    func testLaunchOnlyAndNeverDoNotRunOnActivationOrTimer() throws {
         let fixture = try Fixture()
         defer { fixture.cleanUp() }
         fixture.settings.updateCheckInterval = .everyLaunch
-        #expect(fixture.settings.shouldCheckForUpdates(isApplicationLaunch: true))
-        #expect(!fixture.settings.shouldCheckForUpdates(isApplicationLaunch: false))
+        XCTAssertTrue(fixture.settings.shouldCheckForUpdates(isApplicationLaunch: true))
+        XCTAssertTrue(!fixture.settings.shouldCheckForUpdates(isApplicationLaunch: false))
         fixture.settings.updateCheckInterval = .never
-        #expect(!fixture.settings.shouldCheckForUpdates(isApplicationLaunch: true))
-        #expect(!fixture.settings.shouldCheckForUpdates(isApplicationLaunch: false))
+        XCTAssertTrue(!fixture.settings.shouldCheckForUpdates(isApplicationLaunch: true))
+        XCTAssertTrue(!fixture.settings.shouldCheckForUpdates(isApplicationLaunch: false))
     }
 
-    @Test func failedAutomaticChecksBackOffAndIntervalChangesTakeEffect() throws {
+    func testFailedAutomaticChecksBackOffAndIntervalChangesTakeEffect() throws {
         let fixture = try Fixture()
         defer { fixture.cleanUp() }
         let now = Date(timeIntervalSince1970: 1_000_000)
         fixture.settings.updateCheckInterval = .daily
-        #expect(!fixture.settings.shouldCheckForUpdates(
+        XCTAssertTrue(!fixture.settings.shouldCheckForUpdates(
             now: now, isApplicationLaunch: false, lastAttemptDate: now.addingTimeInterval(-899)
         ))
-        #expect(fixture.settings.shouldCheckForUpdates(
+        XCTAssertTrue(fixture.settings.shouldCheckForUpdates(
             now: now, isApplicationLaunch: false, lastAttemptDate: now.addingTimeInterval(-900)
         ))
         fixture.settings.lastUpdateCheckDate = now.addingTimeInterval(-2 * 86400)
         fixture.settings.updateCheckInterval = .weekly
-        #expect(!fixture.settings.shouldCheckForUpdates(now: now, isApplicationLaunch: false))
+        XCTAssertTrue(!fixture.settings.shouldCheckForUpdates(now: now, isApplicationLaunch: false))
         fixture.settings.updateCheckInterval = .daily
-        #expect(fixture.settings.shouldCheckForUpdates(now: now, isApplicationLaunch: false))
+        XCTAssertTrue(fixture.settings.shouldCheckForUpdates(now: now, isApplicationLaunch: false))
     }
 
-    @Test func downloadConsentStateSurvivesRelaunchAndResetsForAnotherVersion() throws {
+    func testDownloadConsentStateSurvivesRelaunchAndResetsForAnotherVersion() throws {
         let fixture = try Fixture()
         defer { fixture.cleanUp() }
         fixture.settings.availableUpdateVersion = "1.2.3"
-        #expect(!fixture.settings.availableUpdateIsDownloaded)
+        XCTAssertTrue(!fixture.settings.availableUpdateIsDownloaded)
         let reloaded = AppSettings(defaults: fixture.defaults)
-        #expect(reloaded.availableUpdateVersion == "1.2.3")
-        #expect(!reloaded.availableUpdateIsDownloaded)
+        XCTAssertTrue(reloaded.availableUpdateVersion == "1.2.3")
+        XCTAssertTrue(!reloaded.availableUpdateIsDownloaded)
         reloaded.availableUpdateIsDownloaded = true
-        #expect(fixture.settings.availableUpdateIsDownloaded)
+        XCTAssertTrue(fixture.settings.availableUpdateIsDownloaded)
         reloaded.availableUpdateVersion = "1.2.4"
-        #expect(!reloaded.availableUpdateIsDownloaded)
+        XCTAssertTrue(!reloaded.availableUpdateIsDownloaded)
     }
 
-    @Test func checkingOnlyReadsMetadataAndDoesNotRepairOrInstall() async throws {
+    func testCheckingOnlyReadsMetadataAndDoesNotRepairOrInstall() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanUp() }
         let manager = fixture.manager()
@@ -273,41 +273,46 @@ struct DSHUpdateTests {
         let sentinel = directory.appendingPathComponent("pnpm-lock.yaml")
         try "incomplete installation must remain untouched".write(to: sentinel, atomically: true, encoding: .utf8)
         let result = try await manager.checkForUpdates(using: fixture.runtime, reportsProgress: false)
-        #expect(result.version == "1.2.3")
-        #expect(!result.isInstalled)
-        #expect(try String(contentsOf: sentinel, encoding: .utf8) == "incomplete installation must remain untouched")
-        #expect(try fixture.commands() == ["view @deepseek-ai/dsh@latest version dist.integrity --json"])
-        #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("package.json").path))
+        XCTAssertTrue(result.version == "1.2.3")
+        XCTAssertTrue(!result.isInstalled)
+        XCTAssertTrue(try String(contentsOf: sentinel, encoding: .utf8) == "incomplete installation must remain untouched")
+        XCTAssertTrue(try fixture.commands() == ["view @deepseek-ai/dsh@latest version dist.integrity --json"])
+        XCTAssertTrue(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("package.json").path))
     }
 
-    @Test func explicitDownloadUsesDiscoveredVersionAndCanRetryFailure() async throws {
+    func testExplicitDownloadUsesDiscoveredVersionAndCanRetryFailure() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanUp() }
         let manager = fixture.manager()
         let result = try await manager.checkForUpdates(using: fixture.runtime, reportsProgress: false)
-        #expect(!result.isInstalled)
+        XCTAssertTrue(!result.isInstalled)
         // A package-manager failure must leave the version available for an explicit retry.
         try Data().write(to: fixture.root.appendingPathComponent("fail-install"))
-        await #expect(throws: DSHRuntimeError.self) {
+        do {
             try await manager.downloadVersion(result.version, using: fixture.runtime)
+            XCTFail("Expected a DSH runtime error")
+        } catch is DSHRuntimeError {
+            // The failed installation remains available for an explicit retry.
+        } catch {
+            XCTFail("Unexpected download error: \(error)")
         }
         try FileManager.default.removeItem(at: fixture.root.appendingPathComponent("fail-install"))
         try await manager.downloadVersion(result.version, using: fixture.runtime)
         let checkedAgain = try await manager.checkForUpdates(using: fixture.runtime, reportsProgress: false)
-        #expect(checkedAgain.isInstalled)
+        XCTAssertTrue(checkedAgain.isInstalled)
         let commands = try fixture.commands()
-        #expect(commands.filter { $0.hasPrefix("view @deepseek-ai/dsh@1.2.3 ") }.count == 2)
-        #expect(commands.filter { $0.hasPrefix("install ") }.count == 2)
-        #expect(!FileManager.default.fileExists(atPath: fixture.root.appendingPathComponent("DshForMac/runtimes/current").path))
+        XCTAssertTrue(commands.filter { $0.hasPrefix("view @deepseek-ai/dsh@1.2.3 ") }.count == 2)
+        XCTAssertTrue(commands.filter { $0.hasPrefix("install ") }.count == 2)
+        XCTAssertTrue(!FileManager.default.fileExists(atPath: fixture.root.appendingPathComponent("DshForMac/runtimes/current").path))
     }
 
-    @Test func restartPrefersSelectedVersionAndExplainsMissingNativeModule() throws {
+    func testRestartPrefersSelectedVersionAndExplainsMissingNativeModule() throws {
         let fixture = try Fixture()
         defer { fixture.cleanUp() }
         fixture.settings.selectedRuntimeVersion = "0.1.3-alpha.2"
         let manager = fixture.manager()
-        #expect(manager.runtimeVersionForRestart() == "0.1.3-alpha.2")
-        #expect(
+        XCTAssertTrue(manager.runtimeVersionForRestart() == "0.1.3-alpha.2")
+        XCTAssertTrue(
             DSHRuntimeManager.conciseMissingModuleFailure(
                 from: "Error: Cannot find module './build/Release/fs_ext.node'"
             ) == "DSH 启动依赖缺失：找不到模块 ./build/Release/fs_ext.node。请重新下载该 DSH 版本以重建原生依赖。"
@@ -328,7 +333,7 @@ private final class Fixture {
         let suite = "DSHUpdateTests.\(UUID().uuidString)"
         suiteName = suite
         root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defaults = try #require(UserDefaults(suiteName: suite))
+        defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         settings = AppSettings(defaults: defaults)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let npm = root.appendingPathComponent("npm")
@@ -357,7 +362,7 @@ private final class Fixture {
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: npm.path)
         runtime = NodeRuntime(
             nodeURL: root.appendingPathComponent("node"), npmURL: npm, pnpmURL: nil,
-            corepackURL: nil, npxURL: nil, version: try #require(SemanticVersion(string: "22.19.0")),
+            corepackURL: nil, npxURL: nil, version: try XCTUnwrap(SemanticVersion(string: "22.19.0")),
             architecture: "arm64"
         )
     }

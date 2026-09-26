@@ -1,31 +1,31 @@
 import Foundation
-import Testing
+import XCTest
 @testable import DshForMac
 
-struct SemanticVersionTests {
-    @Test func updateCheckIntervalsHaveExpectedCadence() {
-        #expect(DSHUpdateCheckInterval.everyLaunch.minimumInterval == 0)
-        #expect(DSHUpdateCheckInterval.daily.minimumInterval == TimeInterval(24 * 60 * 60))
-        #expect(DSHUpdateCheckInterval.weekly.minimumInterval == TimeInterval(7 * 24 * 60 * 60))
-        #expect(DSHUpdateCheckInterval.monthly.minimumInterval == TimeInterval(30 * 24 * 60 * 60))
-        #expect(DSHUpdateCheckInterval.never.minimumInterval == nil)
+final class SemanticVersionTests: XCTestCase {
+    func testUpdateCheckIntervalsHaveExpectedCadence() {
+        XCTAssertTrue(DSHUpdateCheckInterval.everyLaunch.minimumInterval == 0)
+        XCTAssertTrue(DSHUpdateCheckInterval.daily.minimumInterval == TimeInterval(24 * 60 * 60))
+        XCTAssertTrue(DSHUpdateCheckInterval.weekly.minimumInterval == TimeInterval(7 * 24 * 60 * 60))
+        XCTAssertTrue(DSHUpdateCheckInterval.monthly.minimumInterval == TimeInterval(30 * 24 * 60 * 60))
+        XCTAssertTrue(DSHUpdateCheckInterval.never.minimumInterval == nil)
     }
 
-    @Test func updateChannelsOfferPublishedPrereleaseTags() {
-        #expect(DSHUpdateChannel.allCases.map(\.additionalTag) == ["alpha", "next"])
+    func testUpdateChannelsOfferPublishedPrereleaseTags() {
+        XCTAssertTrue(DSHUpdateChannel.allCases.map(\.additionalTag) == ["alpha", "next"])
     }
 
-    @Test func findsCommonPnpmLocationsOutsideTheGuiPath() {
+    func testFindsCommonPnpmLocationsOutsideTheGuiPath() {
         let home = URL(fileURLWithPath: "/Users/example")
         let candidates = NodeRuntimeDetector.commonPnpmCandidates(homeDirectory: home)
 
-        #expect(candidates.map(\.path).contains("/Users/example/.local/share/pnpm/pnpm"))
-        #expect(candidates.map(\.path).contains("/Users/example/Library/pnpm/pnpm"))
-        #expect(candidates.map(\.path).contains("/opt/homebrew/bin/pnpm"))
+        XCTAssertTrue(candidates.map(\.path).contains("/Users/example/.local/share/pnpm/pnpm"))
+        XCTAssertTrue(candidates.map(\.path).contains("/Users/example/Library/pnpm/pnpm"))
+        XCTAssertTrue(candidates.map(\.path).contains("/opt/homebrew/bin/pnpm"))
     }
 
-    @Test func passesDetectedPnpmToFinderLaunchedDSHProcesses() throws {
-        let version = try #require(SemanticVersion(string: "22.19.0"))
+    func testPassesDetectedPnpmToFinderLaunchedDSHProcesses() throws {
+        let version = try XCTUnwrap(SemanticVersion(string: "22.19.0"))
         let runtime = NodeRuntime(
             nodeURL: URL(fileURLWithPath: "/opt/homebrew/bin/node"),
             npmURL: URL(fileURLWithPath: "/opt/homebrew/bin/npm"),
@@ -42,70 +42,70 @@ struct SemanticVersionTests {
                 systemDirectories: ["/usr/bin", "/Library/Apple/usr/bin", "/custom/system/bin"]
             )
                 .split(separator: ":").map(String.init)
-            #expect(Array(directories.prefix(2)) == ["/opt/homebrew/bin", "/Users/example/.local/share/pnpm"])
-            #expect(Set(directories).count == directories.count)
-            #expect(directories.contains("/Library/Apple/usr/bin"))
-            #expect(directories.contains("/custom/system/bin"))
+            XCTAssertTrue(Array(directories.prefix(2)) == ["/opt/homebrew/bin", "/Users/example/.local/share/pnpm"])
+            XCTAssertTrue(Set(directories).count == directories.count)
+            XCTAssertTrue(directories.contains("/Library/Apple/usr/bin"))
+            XCTAssertTrue(directories.contains("/custom/system/bin"))
             for required in ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin", "/usr/local/sbin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"] {
-                #expect(directories.contains(required))
+                XCTAssertTrue(directories.contains(required))
             }
             if basePath?.contains("/custom/bin") == true {
-                #expect(directories[2] == "/custom/bin")
-                #expect(directories[3] == "/usr/local/bin")
+                XCTAssertTrue(directories[2] == "/custom/bin")
+                XCTAssertTrue(directories[3] == "/usr/local/bin")
             }
         }
     }
 
-    @Test func parsesNodeStyleVersion() throws {
-        let version = try #require(SemanticVersion(string: "v22.19.0\n"))
-        #expect(version == SemanticVersion(string: "22.19.0"))
+    func testParsesNodeStyleVersion() throws {
+        let version = try XCTUnwrap(SemanticVersion(string: "v22.19.0\n"))
+        XCTAssertTrue(version == SemanticVersion(string: "22.19.0"))
     }
 
-    @Test func comparesVersions() throws {
-        let older = try #require(SemanticVersion(string: "22.18.0"))
-        let newer = try #require(SemanticVersion(string: "22.19.0"))
-        #expect(older < newer)
+    func testComparesVersions() throws {
+        let older = try XCTUnwrap(SemanticVersion(string: "22.18.0"))
+        let newer = try XCTUnwrap(SemanticVersion(string: "22.19.0"))
+        XCTAssertTrue(older < newer)
     }
 
-    @Test func comparesPrereleaseVersionsUsingSemVerPrecedence() throws {
-        let beta = try #require(SemanticVersion(string: "1.2.0-beta.2"))
-        let rc = try #require(SemanticVersion(string: "1.2.0-rc.1"))
-        let stable = try #require(SemanticVersion(string: "1.2.0"))
-        let nextPrerelease = try #require(SemanticVersion(string: "1.3.0-alpha.1"))
+    func testComparesPrereleaseVersionsUsingSemVerPrecedence() throws {
+        let beta = try XCTUnwrap(SemanticVersion(string: "1.2.0-beta.2"))
+        let rc = try XCTUnwrap(SemanticVersion(string: "1.2.0-rc.1"))
+        let stable = try XCTUnwrap(SemanticVersion(string: "1.2.0"))
+        let nextPrerelease = try XCTUnwrap(SemanticVersion(string: "1.3.0-alpha.1"))
 
-        #expect(beta < rc)
-        #expect(rc < stable)
-        #expect(stable < nextPrerelease)
+        XCTAssertTrue(beta < rc)
+        XCTAssertTrue(rc < stable)
+        XCTAssertTrue(stable < nextPrerelease)
     }
 
-    @Test func summarizesIncompatiblePluginExports() {
+    func testSummarizesIncompatiblePluginExports() {
         let output = """
         Error: failed to import loader entry llm-subscriptions (dsh-plugin-subscriptions): The requested module '@deepseek-ai/dsh-llm' does not provide an export named 'CallId'
         """
 
-        #expect(
+        XCTAssertTrue(
             DSHRuntimeManager.conciseRuntimeFailure(from: output)
                 == "插件不兼容：dsh-plugin-subscriptions 无法使用 @deepseek-ai/dsh-llm 的 CallId 导出。请选择兼容的已安装版本。"
         )
     }
 
-    @Test func extractsAuthenticatedLocalWebURL() {
+    func testExtractsAuthenticatedLocalWebURL() {
         let output = "dsh web: http://127.0.0.1:3080/?token=one-time-token\n"
 
-        #expect(
+        XCTAssertTrue(
             DSHRuntimeManager.authenticatedWebURL(from: output, port: 3080)?.absoluteString
                 == "http://127.0.0.1:3080/?token=one-time-token"
         )
-        #expect(DSHRuntimeManager.authenticatedWebURL(from: output, port: 3081) == nil)
+        XCTAssertTrue(DSHRuntimeManager.authenticatedWebURL(from: output, port: 3081) == nil)
     }
 
-    @Test func acceptsOnlySupportedDSHNodeRanges() throws {
-        let node22 = try #require(SemanticVersion(string: "22.19.0"))
-        let node23 = try #require(SemanticVersion(string: "23.0.0"))
-        let node24 = try #require(SemanticVersion(string: "24.0.0"))
+    func testAcceptsOnlySupportedDSHNodeRanges() throws {
+        let node22 = try XCTUnwrap(SemanticVersion(string: "22.19.0"))
+        let node23 = try XCTUnwrap(SemanticVersion(string: "23.0.0"))
+        let node24 = try XCTUnwrap(SemanticVersion(string: "24.0.0"))
 
-        #expect(NodeRuntime(nodeURL: URL(fileURLWithPath: "/node"), npmURL: nil, pnpmURL: nil, corepackURL: nil, npxURL: nil, version: node22, architecture: "arm64").supportsDSH)
-        #expect(!NodeRuntime(nodeURL: URL(fileURLWithPath: "/node"), npmURL: nil, pnpmURL: nil, corepackURL: nil, npxURL: nil, version: node23, architecture: "arm64").supportsDSH)
-        #expect(NodeRuntime(nodeURL: URL(fileURLWithPath: "/node"), npmURL: nil, pnpmURL: nil, corepackURL: nil, npxURL: nil, version: node24, architecture: "arm64").supportsDSH)
+        XCTAssertTrue(NodeRuntime(nodeURL: URL(fileURLWithPath: "/node"), npmURL: nil, pnpmURL: nil, corepackURL: nil, npxURL: nil, version: node22, architecture: "arm64").supportsDSH)
+        XCTAssertTrue(!NodeRuntime(nodeURL: URL(fileURLWithPath: "/node"), npmURL: nil, pnpmURL: nil, corepackURL: nil, npxURL: nil, version: node23, architecture: "arm64").supportsDSH)
+        XCTAssertTrue(NodeRuntime(nodeURL: URL(fileURLWithPath: "/node"), npmURL: nil, pnpmURL: nil, corepackURL: nil, npxURL: nil, version: node24, architecture: "arm64").supportsDSH)
     }
 }

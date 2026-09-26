@@ -1262,7 +1262,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     func webView(
         _ webView: WKWebView,
         decidePolicyFor navigationAction: WKNavigationAction,
-        decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
+        decisionHandler: @escaping NavigationActionDecisionHandler
     ) {
         guard let url = navigationAction.request.url else {
             decisionHandler(.cancel)
@@ -1331,7 +1331,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     func webView(
         _ webView: WKWebView,
         decidePolicyFor navigationResponse: WKNavigationResponse,
-        decisionHandler: @escaping @MainActor @Sendable (WKNavigationResponsePolicy) -> Void
+        decisionHandler: @escaping NavigationResponseDecisionHandler
     ) {
         let response = navigationResponse.response
         guard let url = response.url,

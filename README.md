@@ -98,6 +98,8 @@ DSH 的配置、会话和插件仍由 DSH 使用其上游默认用户数据路�
 
 项目使用 Swift Package Manager：
 
+开发需 Xcode 15.2（Swift 5.9）或更新版本；macOS 13 可使用 Xcode 15.2。本地与较新 Xcode 均使用同一套 XCTest 测试，应用的最低运行系统仍为 macOS 11。
+
 ```sh
 swift test
 swift run DshForMac
