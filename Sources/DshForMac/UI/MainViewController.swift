@@ -303,6 +303,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
             ])
         }
         webView.isHidden = false
+        WebKitDraftCompatibility.configure(webView.configuration.userContentController, for: activeDSHVersion)
         webView.load(URLRequest(url: address))
     }
 
