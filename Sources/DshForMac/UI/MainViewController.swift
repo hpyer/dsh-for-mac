@@ -19,28 +19,20 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     private let chooseNodeButton = NSButton(title: "选择 Node.js 路径", target: nil, action: nil)
     private let nodeWebsiteButton = NSButton(title: "打开 Node.js 官网", target: nil, action: nil)
     private let environmentStack = NSStackView()
-    private let previewContainer = NSView()
     private let webOperationOverlay = NSVisualEffectView()
     private let webOperationLabel = NSTextField(wrappingLabelWithString: "")
     private let webOperationSpinner = NSProgressIndicator()
     private let reconnectButton = NSButton(title: "重新连接", target: nil, action: nil)
-    private let previewBridgeToken = UUID().uuidString
+    private let marketRestartBridgeToken = UUID().uuidString
     private var workspaceDrop2AddBridgeToken: String?
     private var taskNotificationBridgeToken: String?
     private var pendingNotificationSessionId: String?
-    private lazy var filePreviewViewController: FilePreviewViewController = {
-        let controller = FilePreviewViewController()
-        controller.onClose = { [weak self] in
-            self?.closeFilePreview()
-        }
-        return controller
-    }()
     private lazy var webView: WorkspaceDrop2AddWebView = {
         let configuration = WKWebViewConfiguration()
         let contentController = WKUserContentController()
         contentController.add(
             WeakScriptMessageHandler(owner: self),
-            name: Self.producedFilePreviewHandlerName
+            name: DSHMarketRestartBridge.handlerName
         )
         contentController.add(
             WeakScriptMessageHandler(owner: self),
@@ -67,7 +59,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
         )
         contentController.addUserScript(
             WKUserScript(
-                source: producedFilePreviewBridgeScript(),
+                source: DSHMarketRestartBridge.script(token: marketRestartBridgeToken),
                 injectionTime: .atDocumentStart,
                 forMainFrameOnly: true,
                 in: .page
@@ -130,8 +122,6 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
               let version = AppSettings.shared.availableUpdateVersion else { return false }
         return !AppSettings.shared.availableUpdateIsDownloaded || !installedDSHVersions().contains(version)
     }
-    private var previewWidthConstraint: NSLayoutConstraint?
-    private var pendingPreviewResponseURLs = Set<URL>()
     private(set) var activeDSHVersion: String?
     private var preferredNodeURL: URL? {
         get {
@@ -146,7 +136,6 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     }
 
     private static let nodePathPreferenceKey = "preferredNodePath"
-    private static let producedFilePreviewHandlerName = "dshProducedFilePreview"
     private static let workspaceDrop2AddBridgeHandlerName = "dshWorkspaceDrop2AddBridge"
     private static let taskNotificationBridgeHandlerName = "dshTaskNotificationBridge"
 
@@ -303,32 +292,14 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
         environmentStack.isHidden = true
         if webView.superview == nil {
             webView.translatesAutoresizingMaskIntoConstraints = false
-            previewContainer.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(webView)
-            view.addSubview(previewContainer)
             configureWebOperationOverlay()
 
-            let previewView = filePreviewViewController.view
-            previewView.translatesAutoresizingMaskIntoConstraints = false
-            previewContainer.addSubview(previewView)
-            NSLayoutConstraint.activate([
-                previewView.leadingAnchor.constraint(equalTo: previewContainer.leadingAnchor),
-                previewView.trailingAnchor.constraint(equalTo: previewContainer.trailingAnchor),
-                previewView.topAnchor.constraint(equalTo: previewContainer.topAnchor),
-                previewView.bottomAnchor.constraint(equalTo: previewContainer.bottomAnchor),
-            ])
-
-            let previewWidthConstraint = previewContainer.widthAnchor.constraint(equalToConstant: 0)
-            self.previewWidthConstraint = previewWidthConstraint
             NSLayoutConstraint.activate([
                 webView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
                 webView.topAnchor.constraint(equalTo: view.topAnchor),
                 webView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-                webView.trailingAnchor.constraint(equalTo: previewContainer.leadingAnchor),
-                previewContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-                previewContainer.topAnchor.constraint(equalTo: view.topAnchor),
-                previewContainer.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-                previewWidthConstraint,
+                webView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             ])
         }
         webView.isHidden = false
@@ -602,7 +573,6 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
         taskNotificationBridgeToken = nil
         webView.stopLoading()
         webView.isHidden = true
-        closeFilePreview()
         environmentStack.isHidden = false
     }
 
@@ -624,25 +594,6 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
         guard webView.superview != nil else { return }
         environmentStack.isHidden = true
         webView.isHidden = false
-    }
-
-    private func showFilePreview(
-        for url: URL,
-        kind: PreviewContentKind? = nil,
-        fileName: String? = nil
-    ) {
-        previewContainer.isHidden = false
-        let preferredWidth = min(520, max(280, view.bounds.width * 0.38))
-        previewWidthConstraint?.constant = min(preferredWidth, max(220, view.bounds.width - 250))
-        view.layoutSubtreeIfNeeded()
-        filePreviewViewController.preview(url: url, kind: kind, fileName: fileName)
-    }
-
-    private func closeFilePreview() {
-        guard previewWidthConstraint?.constant != 0 else { return }
-        previewWidthConstraint?.constant = 0
-        previewContainer.isHidden = true
-        view.layoutSubtreeIfNeeded()
     }
 
     private func configureWebOperationOverlay() {
@@ -948,122 +899,6 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
             && url.port == AppSettings.shared.port
     }
 
-    private func isPreviewableSourceURL(_ url: URL) -> Bool {
-        url.isFileURL || (isLocalDSHURL(url) && PreviewContentKind.detect(url: url).isPreviewable)
-    }
-
-    private func producedFilePreviewBridgeScript() -> String {
-        let openPathRequestPaths = ProducedFilePreviewBridge.openPathRequestPaths
-            .sorted()
-            .map { "\"\($0)\"" }
-            .joined(separator: ", ")
-        return """
-        (() => {
-          const bridge = window.webkit?.messageHandlers?.\(Self.producedFilePreviewHandlerName);
-          if (!bridge || window.__dshForMacProducedFilePreviewInstalled) return;
-          window.__dshForMacProducedFilePreviewInstalled = true;
-
-          var pendingClick = null;
-          const originalFetch = window.fetch.bind(window);
-          const wrappedTransports = new WeakSet();
-          document.addEventListener('click', (event) => {
-            if (!event.isTrusted) return;
-            const target = event.target instanceof Element
-              ? event.target.closest('[data-produced-files-row] button[title], [data-tool] button[class*="fileLink"], button[title][aria-label*="打开"], button[title][aria-label*="Open"]')
-              : null;
-            if (!target) return;
-
-            // DSH 0.1.2-rc.1 exposes an absolute file path in the title of
-            // both produced-file chips and clickable mentions in a response.
-            // Intercept them before React dispatches its handler, which would
-            // otherwise invoke the system opener.
-            const path = target.getAttribute('title');
-            if (typeof path === 'string' && path.startsWith('/')) {
-              event.preventDefault();
-              event.stopImmediatePropagation();
-              bridge.postMessage({ path, token: '\(previewBridgeToken)' });
-              return;
-            }
-
-            // Links with a relative path are resolved by DSH before its RPC,
-            // so retain the request-level interception as a fallback.
-            pendingClick = { expiresAt: Date.now() + 1_500 };
-          }, true);
-
-          const interceptOpenPathRequest = function(delegate, input, init) {
-            const requestURL = input instanceof Request ? input.url : String(input);
-            const request = new URL(requestURL, window.location.href);
-            const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
-            const isMarketRestartRequest = request.origin === window.location.origin
-              && request.pathname === '/dsh-market/restart'
-              && method === 'POST';
-            if (isMarketRestartRequest) {
-              bridge.postMessage({ action: 'restart', token: '\(previewBridgeToken)' });
-              return Promise.resolve(new Response(JSON.stringify({ ok: true, managed: true }), {
-                status: 202,
-                headers: { 'content-type': 'application/json' }
-              }));
-            }
-
-            // DSH 0.1.2-rc.1 moved this capability from the host namespace to
-            // the session namespace. Keep both Connection RPC routes so
-            // previewing works with installed DSH versions on either side.
-            const openPathRequestPaths = new Set([\(openPathRequestPaths)]);
-            const rpcPath = new URL(requestURL, window.location.href).pathname;
-            const isOpenPathRequest = openPathRequestPaths.has(rpcPath);
-            if (!pendingClick || pendingClick.expiresAt < Date.now() || !isOpenPathRequest) {
-              return delegate(input, init);
-            }
-
-            return Promise.resolve().then(async () => {
-              const body = typeof init?.body === 'string'
-                ? init.body
-                : input instanceof Request
-                  ? await input.clone().text()
-                  : '';
-              const request = JSON.parse(body);
-              // Newer DSH Connection RPCs nest arguments under
-              // payload.args, while the previous host route used payload.
-              const path = request?.payload?.args?.request?.path ?? request?.payload?.path;
-              if (request?.type !== 'client-request' || typeof request?.rpcId !== 'string' || typeof path !== 'string' || path.length === 0) {
-                return delegate(input, init);
-              }
-
-              pendingClick = null;
-              bridge.postMessage({ path, token: '\(previewBridgeToken)' });
-              return new Response(JSON.stringify({
-                type: 'server-response',
-                rpcId: request.rpcId,
-                result: { ok: true, value: { opened: true } }
-              }), {
-                status: 200,
-                headers: { 'content-type': 'application/json' }
-              });
-            }).catch(() => delegate(input, init));
-          };
-
-          window.fetch = function(input, init) {
-            return interceptOpenPathRequest(originalFetch, input, init);
-          };
-
-          // The current Web frontend may supply its own fetch implementation
-          // through this boot-time transport. Wrap it as well: tool-call rows
-          // and relative-path deliverables use that route to resolve the
-          // session workspace before asking the host to open the file.
-          const wrapTransportFetch = () => {
-            const transport = window.__DSH_TRANSPORT__;
-            if (!transport || typeof transport.fetch !== 'function' || wrappedTransports.has(transport)) return;
-            const delegate = transport.fetch.bind(transport);
-            transport.fetch = (input, init) => interceptOpenPathRequest(delegate, input, init);
-            wrappedTransports.add(transport);
-          };
-          wrapTransportFetch();
-          const transportWatcher = window.setInterval(wrapTransportFetch, 50);
-          window.setTimeout(() => window.clearInterval(transportWatcher), 10_000);
-        })();
-        """
-    }
-
     /// Installs in the page's JavaScript world after the plugin handshake. It
     /// runs on window capture before DSH's document-level attachment listener.
     private func installWorkspaceDrop2AddPageProtection() {
@@ -1150,21 +985,12 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
             return
         }
 
-        guard message.name == Self.producedFilePreviewHandlerName,
-              payload["token"] as? String == previewBridgeToken
+        guard message.name == DSHMarketRestartBridge.handlerName,
+              let url = message.frameInfo.request.url, isLocalDSHURL(url),
+              payload["token"] as? String == marketRestartBridgeToken
         else { return }
 
-        if payload["action"] as? String == "restart" {
-            restartDeepSeekHarness()
-            return
-        }
-
-        guard let path = payload["path"] as? String,
-              path.hasPrefix("/")
-        else {
-            return
-        }
-        showFilePreview(for: URL(fileURLWithPath: path).standardizedFileURL)
+        restartDeepSeekHarness()
     }
 
     private func registerWorkspaceDrop2AddBridge(_ payload: [String: Any]) {
@@ -1276,16 +1102,6 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
             return
         }
 
-        if isPreviewableSourceURL(url) {
-            showFilePreview(for: url)
-            decisionHandler(.cancel)
-            return
-        }
-
-        if isLocalDSHURL(url) {
-            pendingPreviewResponseURLs.insert(url)
-        }
-
         guard !isLocalDSHURL(url) else {
             decisionHandler(.allow)
             return
@@ -1337,64 +1153,13 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
 
     func webView(
         _ webView: WKWebView,
-        decidePolicyFor navigationResponse: WKNavigationResponse,
-        decisionHandler: @escaping NavigationResponseDecisionHandler
-    ) {
-        let response = navigationResponse.response
-        guard let url = response.url,
-              pendingPreviewResponseURLs.remove(url) != nil,
-              isLocalDSHURL(url),
-              url.path != "/",
-              let mimeType = response.mimeType?.lowercased(),
-              mimeType != "text/html",
-              mimeType != "application/xhtml+xml"
-        else {
-            decisionHandler(.allow)
-            return
-        }
-
-        let fileName = responseFileName(from: response) ?? PreviewContentKind.sourceFileName(for: url)
-        let kind = PreviewContentKind.detect(fileName: fileName, mimeType: mimeType)
-        showFilePreview(for: url, kind: kind, fileName: fileName)
-        decisionHandler(.cancel)
-    }
-
-    private func responseFileName(from response: URLResponse) -> String? {
-        guard let httpResponse = response as? HTTPURLResponse,
-              let header = httpResponse.allHeaderFields.first(where: {
-                  ($0.key as? String)?.caseInsensitiveCompare("Content-Disposition") == .orderedSame
-              })?.value as? String
-        else {
-            return nil
-        }
-        for component in header.split(separator: ";") {
-            let trimmed = component.trimmingCharacters(in: .whitespaces)
-            if trimmed.lowercased().hasPrefix("filename=") {
-                let value = trimmed.dropFirst("filename=".count)
-                    .trimmingCharacters(in: CharacterSet(charactersIn: "\\\""))
-                return value.removingPercentEncoding ?? value
-            }
-            if trimmed.lowercased().hasPrefix("filename*=") {
-                let value = String(trimmed.dropFirst("filename*=".count))
-                let encodedValue = value.components(separatedBy: "''").last ?? value
-                return encodedValue.removingPercentEncoding ?? encodedValue
-            }
-        }
-        return nil
-    }
-
-    func webView(
-        _ webView: WKWebView,
         createWebViewWith configuration: WKWebViewConfiguration,
         for navigationAction: WKNavigationAction,
         windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
         guard let url = navigationAction.request.url else { return nil }
 
-        if isPreviewableSourceURL(url) {
-            showFilePreview(for: url)
-        } else if isLocalDSHURL(url) {
-            pendingPreviewResponseURLs.insert(url)
+        if isLocalDSHURL(url) {
             webView.load(navigationAction.request)
         } else {
             openExternalURL(url)

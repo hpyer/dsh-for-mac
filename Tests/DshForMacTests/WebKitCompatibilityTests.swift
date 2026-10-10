@@ -189,6 +189,14 @@ final class WebKitCompatibilityTests: XCTestCase {
         worker.evaluateScript(
             """
             globalThis.Iterator = undefined;
+            Promise.withResolvers = undefined;
+            Promise.try = undefined;
+            RegExp.escape = undefined;
+            Math.sumPrecise = undefined;
+            Map.prototype.getOrInsert = undefined;
+            Map.prototype.getOrInsertComputed = undefined;
+            Set.prototype.intersection = undefined;
+            Uint8Array.fromBase64 = undefined;
             globalThis.URL = class URL { constructor(value) { this.href = value; } };
             globalThis.atob = () => String.fromCharCode(1);
             """
@@ -208,5 +216,45 @@ final class WebKitCompatibilityTests: XCTestCase {
                 """
             )?.toBool() == true
         )
+    }
+
+    func testSuppliesDeferredPromisesUsedBySessions() throws {
+        let context = try XCTUnwrap(JSContext())
+        context.evaluateScript("Promise.withResolvers = undefined")
+        context.evaluateScript(WebKitCompatibility.script)
+        XCTAssertNil(context.exception)
+
+        context.evaluateScript(
+            """
+            globalThis.resolved = null;
+            globalThis.rejected = null;
+            const success = Promise.withResolvers();
+            const failure = Promise.withResolvers();
+            success.promise.then(value => { resolved = value; });
+            failure.promise.catch(reason => { rejected = reason; });
+            success.resolve(42);
+            failure.reject('cancelled');
+            class SessionPromise extends Promise {};
+            globalThis.subclass = SessionPromise.withResolvers().promise instanceof SessionPromise;
+            """
+        )
+        XCTAssertNil(context.exception)
+        XCTAssertEqual(
+            context.evaluateScript("JSON.stringify({ resolved, rejected, subclass })")?.toString(),
+            #"{"resolved":42,"rejected":"cancelled","subclass":true}"#
+        )
+    }
+
+    func testPreservesAnExistingDeferredPromiseImplementation() throws {
+        let context = try XCTUnwrap(JSContext())
+        context.evaluateScript(
+            """
+            Promise.withResolvers = function nativeWithResolvers() {};
+            globalThis.originalWithResolvers = Promise.withResolvers;
+            """
+        )
+        context.evaluateScript(WebKitCompatibility.script)
+        XCTAssertNil(context.exception)
+        XCTAssertTrue(context.evaluateScript("Promise.withResolvers === originalWithResolvers")?.toBool() == true)
     }
 }

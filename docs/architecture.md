@@ -11,12 +11,11 @@ DshForMac（DeepSeek Harness for Mac）是 [DeepSeek Harness（DSH）](https://w
 ```text
 DshForMac AppKit 应用
   ├─ AppDelegate：窗口、菜单栏、工具栏与应用生命周期
-  ├─ MainViewController：Node 检测、DSH 启动状态、WKWebView 与产出物预览
+  ├─ MainViewController：Node 检测、DSH 启动状态与 WKWebView
   ├─ SettingsViewController：端口、镜像、版本、更新频率与推荐插件设置
   ├─ NodeRuntimeDetector：定位 node/npm/npx/pnpm/corepack，验证版本与架构
   ├─ DSHRuntimeManager：下载、校验、启动、健康检查、版本回收与进程停止
-  ├─ AppUpdateController：独立检查 DshForMac 发布版本并协调应用内替换与重启
-  └─ FilePreviewViewController：只读文本、Markdown、图片和 SVG 预览
+  └─ AppUpdateController：独立检查 DshForMac 发布版本并协调应用内替换与重启
 
 子进程
   └─ <node> node_modules/@deepseek-ai/dsh/lib/bin.js web --no-open --port <port>
@@ -25,7 +24,7 @@ DshForMac AppKit 应用
   └─ http://127.0.0.1:<port> → WKWebView
 ```
 
-DSH 网页中的本机文件链接，以及由用户点击产出物按钮触发的 `session/openWorkspacePath` 请求（兼容旧版 `host/openPath`），会由原生界面拦截后显示在右侧只读预览栏。不能预览的文件仍可交给默认应用打开。
+文件与产出物预览由 DSH 内置界面处理。DSH 0.2.0-rc.2 和 0.2.1-alpha.1 的文档预览包包含按需加载的 `client.pdf.js`（PDF.js 渲染器）；[上游文档](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/client/ui-sidebar-documentpreview/README.md)也明确支持 PDF 预览。主 WebView 填满原生内容区域，不再提供独立预览栏，也不拦截文件按钮、`session/openWorkspacePath` 或 `host/openPath` 请求。本机导航交给 WebView；外部链接与 `file:` 导航仍经用户确认后交给系统默认应用。
 
 菜单栏依次显示应用版本与 DSH 运行状态、带快捷键的主窗口／页面重载／重启／设置操作、两种更新检查，以及单独的退出项。应用设置使用 ⇧⌘,，主菜单与状态菜单保持一致；⌘, 留给内嵌 DSH 页面。状态文字使用辅助文字颜色。关闭主窗口不会结束受管服务，Dock 重新打开或选择“显示主窗口”（⌘0）会将已有窗口置前。
 
@@ -33,7 +32,7 @@ DSH 网页中的本机文件链接，以及由用户点击产出物按钮触发�
 
 Mac 唤醒时独立探测当前已验证的本机 DSH 地址。服务正常且 WebView 未报错时保留页面；确认连接中断后进行有限次数的重试，恢复后重载现有页面。WebView 导航失败或内容进程终止时也进入此流程；多次失败后显示手动重连入口。探测不下载 DSH，也不自动重启服务。
 
-DSH 0.1.2-rc.1 会将思考链和相对路径产物（例如 `.sql`、`.md`）按会话工作区解析，再以 Connection RPC 请求原生打开：路径位于 `payload.args.request.path`；旧版路径位于 `payload.path`。预览桥接同时解析两种结构，并在页面世界包装 DSH 的请求传输，以便覆盖对话内链接、思考链和产物链接。
+DSH Market 的重启请求使用独立桥接：页面世界的 fetch 与启动时安装的 DSH transport 仅拦截同源 `POST /dsh-market/restart`，以私有令牌通知原生运行时管理器重启受管进程。文件打开请求及其正文直接交给 DSH。
 
 推荐插件中的 `dsh-workspace-drop2add` 使用混合桥接：插件加载后以一次性令牌向原生 WebView 握手；只有握手成功，原生层才会截获左侧栏内从 Finder 拖入的单个目录，并将真实绝对路径回传给插件创建 DSH 工作区。右侧和其他区域的拖放仍交给 DSH。插件未安装、已禁用或尚未握手时，原生层不会拦截任何拖放。项目自研插件均在 `dsh-plugins/` 这一 pnpm workspace 根目录下管理。
 
@@ -95,15 +94,14 @@ DSH 0.1.6 的 xterm DOM 渲染器只指定普通等宽字体。WebView 在文档
 - 后台任务提醒：本地插件随应用包提供，至少要求 DSH `0.1.5-rc.3`。启用不申请 macOS 系统通知授权；AppKit 面板仅在应用运行时显示，约 8 秒后消失，不提供待处理列表。关闭主窗口不终止服务。已启用的本地 link 在应用路径变化后会迁移到当前应用包；禁用时移除 web profile 中的对应插件。
 - 与系统通知的边界：提醒不进入通知中心或锁屏，不受系统专注模式管理；错过卡片后不可找回，应用退出或 Mac 睡眠时不可用。当前未签名和本地临时签名包在 macOS 26.6.2 实测无法取得系统通知授权（`UNErrorDomain` 错误 1），因此不尝试调用系统通知接口，也不引导用户到系统设置手动添加应用。
 
-## WebView 与预览安全
+## WebView 安全
 
 - 内嵌 WebView 只允许加载配置端口的 `http://127.0.0.1` DSH 服务；其他链接或文件需要用户确认后才交给浏览器或默认应用。
-- 在加载本机 DSH 页面前，WebView 会补齐 macOS 13 等旧版 WebKit 缺失、但新版 DSH 会话和 PDF 预览使用的 JavaScript API，包括 `Promise.withResolvers`、`Promise.try`、`URL.parse`、`RegExp.escape`、`Math.sumPrecise`、`Map.getOrInsert*`、`Set.intersection`、`Uint8Array.fromBase64`、`Iterator` 和 `AbortSignal.any/timeout`。DSH 文档预览创建的 PDF Worker 也会获得所需兼容实现，系统已提供时不会覆盖原生实现。
+- 兼容旧版 macOS 是核心要求，最低部署目标保持 macOS 11。原生文件预览已移除，但 DSH 内置功能依赖的 WebKit 兼容层继续保留。在加载本机 DSH 页面前，补齐 macOS 13 等旧版 WebKit 缺失的 `Promise.withResolvers`、`Promise.try`、`URL.parse`、`RegExp.escape`、`Math.sumPrecise`、`Map.getOrInsert*`、`Set.intersection`、`Uint8Array.fromBase64`、`Iterator` 和 `AbortSignal.any/timeout`，已有原生 API 不覆盖。仅在需要兼容时，向可识别的 DSH PDF.js Worker Blob 前置同一套兼容实现；普通 Blob 不注入，不修改受管 DSH 包。
 - DSH 0.2.0-rc.2 在主对话外包裹 `display: contents` 插槽。文档加载后，以 `[data-slot="main.conversation"] > [data-phase]` 定向将主对话根节点改为 flex 填充、自动高度和零最小高度，避免依赖穿过插槽的百分比高度解析。样式使用稳定属性，不依赖 CSS 模块哈希，不改变内部滚动、输入框定位或其他面板。
-- 产出物桥接只接受用户触发的请求，并使用每次应用启动生成的私有令牌校验消息。
+- Market 重启桥接只接受配置的本机 DSH 主框架与每次应用启动生成的私有令牌。
 - 文件夹工作区桥接只接受已加载 `dsh-workspace-drop2add` 插件的随机令牌，并且只接受左侧栏中的单个本地目录；它不会把路径注入普通对话附件的拖放流程。
 - 任务提醒桥接只接受本机 DSH 主框架、当前插件令牌和有限长度的会话标识；点击提醒时仅向本机 WebView 传回会话 ID。
-- 文本、Markdown、图片和 SVG 仅以只读方式预览。预览有文件大小、图片像素和文本长度限制；Markdown 与 SVG 在受限 WebView 中渲染，禁止其脚本和外部导航。
 - DSH 启动命令、端口、版本和 registry 均以结构化参数传入；应用不设置 `DSH_HOME`，不执行 `npm config set`，也不改写用户 shell 配置。
 
 ## 打包方式
