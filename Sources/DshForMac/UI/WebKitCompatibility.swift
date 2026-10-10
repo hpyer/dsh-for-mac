@@ -69,6 +69,21 @@ enum WebKitCompatibility {
     /// WebKit shipped with older supported macOS versions (for example, macOS 13).
     static let script = """
     (() => {
+      const installLegacyCompatibility = \(WebKitLegacyAPIs.installer);
+      const needsLegacyCompatibility =
+        typeof Object.hasOwn !== 'function'
+        || typeof Array.prototype.at !== 'function'
+        || typeof Array.prototype.findLast !== 'function'
+        || typeof Array.prototype.findLastIndex !== 'function'
+        || typeof Array.prototype.toSorted !== 'function'
+        || typeof Array.prototype.toReversed !== 'function'
+        || typeof Symbol.dispose === 'undefined'
+        || typeof globalThis.structuredClone !== 'function'
+        || typeof ArrayBuffer.prototype.transferToFixedLength !== 'function'
+        || typeof Uint8Array.prototype.toBase64 !== 'function'
+        || (typeof Response === 'function' && typeof Response.prototype.bytes !== 'function')
+        || (typeof ReadableStream === 'function' && typeof ReadableStream.prototype[Symbol.asyncIterator] !== 'function')
+        || (typeof AbortSignal === 'function' && typeof AbortSignal.prototype.throwIfAborted !== 'function');
       const needsIteratorCompatibility = typeof globalThis.Iterator === 'undefined';
       const needsStandardCompatibility =
         typeof Promise.withResolvers !== 'function'
@@ -226,15 +241,17 @@ enum WebKitCompatibility {
       };
 
       installStandardCompatibility(globalThis);
+      installLegacyCompatibility(globalThis);
       installIteratorCompatibility(globalThis);
 
       // DSH's document preview creates its bundled PDF.js worker from a
       // JavaScript Blob. User scripts do not run in workers, so prepend the
       // missing APIs only to that recognisable worker payload.
-      if ((needsIteratorCompatibility || needsStandardCompatibility) && typeof Blob === 'function') {
+      if ((needsIteratorCompatibility || needsStandardCompatibility || needsLegacyCompatibility) && typeof Blob === 'function') {
         const NativeBlob = Blob;
         const workerCompatibilityScript =
           `(${installStandardCompatibility.toString()})(globalThis);\n`
+          + `(${installLegacyCompatibility.toString()})(globalThis);\n`
           + `(${installIteratorCompatibility.toString()})(globalThis);\n`;
         globalThis.Blob = class Blob extends NativeBlob {
           constructor(parts, options) {

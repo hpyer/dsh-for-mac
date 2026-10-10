@@ -100,6 +100,7 @@ DSH 0.1.6 的 xterm DOM 渲染器只指定普通等宽字体。WebView 在文档
 
 - 内嵌 WebView 只允许加载配置端口的 `http://127.0.0.1` DSH 服务；其他链接或文件需要用户确认后才交给浏览器或默认应用。
 - 兼容旧版 macOS 是核心要求，最低部署目标保持 macOS 11。原生文件预览已移除，但 DSH 内置功能依赖的 WebKit 兼容层继续保留。在加载本机 DSH 页面前，补齐 macOS 13 等旧版 WebKit 缺失的 `Promise.withResolvers`、`Promise.try`、`URL.parse`、`RegExp.escape`、`Math.sumPrecise`、`Map.getOrInsert*`、`Set.intersection`、`Uint8Array.fromBase64`、`Iterator` 和 `AbortSignal.any/timeout`，已有原生 API 不覆盖。仅在需要兼容时，向可识别的 DSH PDF.js Worker Blob 前置同一套兼容实现；普通 Blob 不注入，不修改受管 DSH 包。
+- DSH `0.2.0-rc.2` 与 `0.2.1-alpha.2` 发布代码审计后，兼容层还补齐 `Object.hasOwn`、数组末尾访问/搜索/复制排序、`Symbol.dispose`、`structuredClone`、`ArrayBuffer.transferToFixedLength`、`Uint8Array.toBase64`、`Response.bytes`、ReadableStream 异步迭代与 `AbortSignal.throwIfAborted`。页面与 PDF Worker 共用自包含安装器。缓冲区转移通过原生 MessageChannel 脱离源数据；克隆不丢失循环和共享视图，不支持的宿主对象明确拒绝。用途、验证和限制见 [WebKit 兼容审计](webkit-compatibility.md)。
 - DSH 0.2.0-rc.2 在主对话外包裹 `display: contents` 插槽。文档加载后，以 `[data-slot="main.conversation"] > [data-phase]` 定向将主对话根节点改为 flex 填充、自动高度和零最小高度，避免依赖穿过插槽的百分比高度解析。样式使用稳定属性，不依赖 CSS 模块哈希，不改变内部滚动、输入框定位或其他面板。
 - Market 重启桥接只接受配置的本机 DSH 主框架与每次应用启动生成的私有令牌。
 - 文件夹工作区桥接只接受已加载 `dsh-workspace-drop2add` 插件的随机令牌，并且只接受左侧栏中的单个本地目录；它不会把路径注入普通对话附件的拖放流程。

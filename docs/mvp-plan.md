@@ -14,6 +14,7 @@
 
 - 点击文件树、对话文件链接或产出物时，使用 DSH 内置预览；不出现第二个原生预览栏。新窗口请求中的本机链接在主 WebView 加载，外部链接和 `file:` 导航经确认后交给系统默认应用。
 - 在 DSH 内置界面验证文本、Markdown、图片与 PDF 预览，重点人工复验 macOS 11 与 macOS 13。自动测试模拟缺失 API，验证页面及 PDF Worker 的兼容实现、原生实现保留，以及普通 Blob 不注入；会话测试验证 deferred Promise 的完成、拒绝与子类行为。移除原生预览不移除这些兼容测试。
+- API 回归测试还覆盖数组不变性和空槽、循环克隆和共享缓冲区视图、大字体 Base64、真实 WebView 的 buffer 转移与失败保留、ReadableStream 完成/错误/取消后的锁释放、Response 消费语义及真实 Worker 字体转移。审计 DSH `0.2.0-rc.2` 和 `0.2.1-alpha.2`；旧系统人工验收补充模型排序、定时任务、轨迹及设置保存，不将缺失 API 模拟等同于完整旧系统实测，详见 [WebKit 兼容审计](webkit-compatibility.md)。
 - DSH Market 发起重启时由原生运行时管理器重启受管进程。WebKit 回归测试验证仅拦截同源 POST 重启，GET、不同端口以及新旧文件打开 RPC 原样交给 DSH，后安装的 transport 不重复发送重启消息。
 
 ## 内嵌终端环境
