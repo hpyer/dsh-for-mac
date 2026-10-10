@@ -16,21 +16,25 @@ final class DSHUpdateTests: XCTestCase {
     }
 
     func testMinimumDSHVersionHandlesPrereleaseAndStableReleases() {
-        XCTAssertTrue(DSHCompatibility.minimumVersion == "0.1.5-rc.1")
+        XCTAssertTrue(DSHCompatibility.minimumVersion == "0.1.6")
         XCTAssertTrue(!DSHCompatibility.supports("0.1.5-alpha.2"))
         XCTAssertTrue(!DSHCompatibility.supports("0.1.5-rc.0"))
         XCTAssertTrue(!DSHCompatibility.supports("0.1.4"))
-        XCTAssertTrue(DSHCompatibility.supports("0.1.5-rc.1"))
-        XCTAssertTrue(DSHCompatibility.supports("0.1.5-rc.3"))
-        XCTAssertTrue(DSHCompatibility.supports("0.1.5"))
+        XCTAssertTrue(!DSHCompatibility.supports("0.1.5-rc.1"))
+        XCTAssertTrue(!DSHCompatibility.supports("0.1.5-rc.3"))
+        XCTAssertTrue(!DSHCompatibility.supports("0.1.5"))
+        XCTAssertTrue(!DSHCompatibility.supports("0.1.6-alpha.2"))
+        XCTAssertTrue(!DSHCompatibility.supports("0.1.6-rc.1"))
         XCTAssertTrue(DSHCompatibility.supports("0.1.6"))
+        XCTAssertTrue(DSHCompatibility.supports("0.1.6+build.1"))
         XCTAssertTrue(DSHCompatibility.supports("0.1.7-rc.1"))
+        XCTAssertTrue(DSHCompatibility.supports("0.2.0-rc.2"))
     }
 
     func testIncompatibleSelectedDSHIsPreservedAndNeverStarted() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanUp() }
-        let version = "0.1.5-rc.0"
+        let version = "0.1.5"
         fixture.settings.selectedRuntimeVersion = version
         let directory = fixture.root.appendingPathComponent("DshForMac/runtimes/versions/\(version)")
         let executable = directory.appendingPathComponent("node_modules/.bin/dsh")
@@ -50,6 +54,44 @@ final class DSHUpdateTests: XCTestCase {
         }
         XCTAssertTrue(FileManager.default.fileExists(atPath: executable.path))
         XCTAssertTrue(fixture.settings.selectedRuntimeVersion == version)
+        XCTAssertTrue(!FileManager.default.fileExists(atPath: fixture.root.appendingPathComponent("commands").path))
+    }
+
+    func testIncompatibleCurrentDSHCannotStartDownloadOrRollback() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let version = "0.1.5"
+        let directory = fixture.root.appendingPathComponent("DshForMac/runtimes/versions/\(version)")
+        let executable = directory.appendingPathComponent("node_modules/.bin/dsh")
+        try FileManager.default.createDirectory(at: executable.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "#!/bin/sh\nexit 0\n".write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        let currentLink = fixture.root.appendingPathComponent("DshForMac/runtimes/current")
+        try FileManager.default.createSymbolicLink(at: currentLink, withDestinationURL: directory)
+        let manager = fixture.manager()
+
+        do {
+            _ = try await manager.start(using: fixture.runtime)
+            XCTFail("Expected an incompatible current version error")
+        } catch let error as DSHRuntimeError {
+            guard case let .versionBelowMinimum(rejectedVersion) = error else {
+                return XCTFail("Unexpected runtime error: \(error)")
+            }
+            XCTAssertEqual(rejectedVersion, version)
+        }
+        do {
+            try await manager.downloadVersion(version, using: fixture.runtime)
+            XCTFail("Expected an incompatible download version error")
+        } catch let error as DSHRuntimeError {
+            guard case let .versionBelowMinimum(rejectedVersion) = error else {
+                return XCTFail("Unexpected runtime error: \(error)")
+            }
+            XCTAssertEqual(rejectedVersion, version)
+        }
+        XCTAssertNil(manager.rollbackRuntimeVersion(excluding: "0.2.0-rc.2"))
+        XCTAssertEqual(currentLink.resolvingSymlinksInPath(), directory.resolvingSymlinksInPath())
+        XCTAssertTrue(FileManager.default.fileExists(atPath: executable.path))
+        XCTAssertNil(fixture.settings.selectedRuntimeVersion)
         XCTAssertTrue(!FileManager.default.fileExists(atPath: fixture.root.appendingPathComponent("commands").path))
     }
 

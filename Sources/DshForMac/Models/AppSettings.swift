@@ -3,7 +3,7 @@ import Foundation
 enum AppMetadata {
     static let version = "0.4.1"
     /// Bump only when a release intentionally stops supporting older DSH runtimes.
-    static let minimumSupportedDSHVersion = "0.1.5-rc.1"
+    static let minimumSupportedDSHVersion = "0.1.6"
 }
 
 enum PackageRegistry: String, CaseIterable, Sendable {

@@ -42,12 +42,14 @@ DSH Market 的重启请求使用独立桥接：页面世界的 fetch 与启动�
 
 1. 应用启动时检测 Node.js。检测范围包括 `PATH`、Homebrew 常用路径和 nvm、fnm、Volta、mise、asdf 等常见管理器路径；也支持用户手动选择 `node` 可执行文件。
 2. Node.js 仅在版本为 22.19 或以上的 v22，或 v24 及以上，且同目录/环境中可找到 npm 与 npx 时视为可用。检测成功后自动进入 DSH 启动流程。
-3. 应用优先使用用户选定的版本，其次使用最近一次健康检查成功的当前版本；两者都不存在时，才会通过配置的 registry 查询候选版本。`latest` 始终会被检查；用户可多选 `alpha`、`next` 作为额外检查标签，旧设置中的 `beta` 会被忽略。应用按完整 SemVer 优先级从可用候选中选择较新版本，并保留标签来源。启动和下载前以 `AppMetadata.minimumSupportedDSHVersion` 校验版本；当前门槛为 `0.1.5-rc.1`。低于门槛时不启动，也不因本次检查删除受管运行时；主窗口说明所需版本并提供 DSH 更新入口。回退候选也须满足门槛。
+3. 应用优先使用用户选定的版本，其次使用最近一次健康检查成功的当前版本；两者都不存在时，才会通过配置的 registry 查询候选版本。`latest` 始终会被检查；用户可多选 `alpha`、`next` 作为额外检查标签，旧设置中的 `beta` 会被忽略。应用按完整 SemVer 优先级从可用候选中选择较新版本，并保留标签来源。启动和下载前以 `AppMetadata.minimumSupportedDSHVersion` 校验版本；当前门槛为 `0.1.6` 正式版，排除该版本的 alpha、beta、rc，但允许 SemVer 更高的预发布版本。低于门槛时不启动，也不因本次检查删除受管运行时；主窗口说明所需版本并提供 DSH 更新入口。回退候选也须满足门槛。
 4. DSH 被安装在独立版本目录中。优先使用 pnpm；未找到 pnpm 时会尝试通过 Corepack 启用，失败则使用 npm。下载后读取锁文件，确认 `@deepseek-ai/dsh` 的 integrity 与 registry 元数据一致，并执行包管理器的待处理构建，以生成 `fs-ext`、`node-pty` 等原生依赖。
 5. 应用使用已检测到的 `node` 直接执行 DSH 的 `lib/bin.js`，不经过 shell，也不会打开外部浏览器。服务通过 `http://127.0.0.1:<port>/` 健康检查；默认端口为 3080。
 6. 健康检查成功后才更新 `current` 软链接。重启只启动当前或手动选择的版本，不额外检查更新。正常退出或重启时，应用会终止自己管理的 DSH 子进程。
 
 子进程 PATH 依次包含选定 Node 与检测到的 pnpm 目录、应用继承的路径、`/etc/paths` 与按文件名排序的 `/etc/paths.d` 条目，最后补齐 Intel/Apple Silicon 的 Homebrew bin/sbin 和基础系统目录，并去重。系统文件缺失或不可读时继续使用兜底路径；不执行 shell 来获取环境。这样从 Finder 启动时，DSH 内的交互式 zsh 也能找到 Homebrew 安装的 fnm、direnv、starship 等配置依赖；原生启动器不主动执行或修改用户 shell 配置。
+
+提升最低门槛是为避开旧会话格式读取器。上游 [V3 → V4 变更](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/persistence-changes/2026-09-16-session-format-v4.md) 明确 V3 读取器拒绝较新一代会话；本应用沿用 DSH 的数据路径和迁移，不改写会话文件。此门槛不保证高于最低版本的任意两版之间可安全回退；系统最低部署目标仍为 macOS 11，WebKit 兼容补丁继续保留。
 
 DSH 0.1.6 的 xterm DOM 渲染器只指定普通等宽字体。WebView 在文档加载后为 `.xterm .xterm-rows` 添加本机 Nerd Font 的显式字体回退，优先使用 MesloLGS NF，覆盖私用区图标（含 Powerline 分隔符）。字体映射只作用于私用区，普通文字沿用 DSH 原有字体和字符宽度，不影响聊天页面。没有安装候选字体时沿用原有回退，不下载字体，也不修改受管 DSH 包。
 
@@ -91,7 +93,7 @@ DSH 0.1.6 的 xterm DOM 渲染器只指定普通等宽字体。WebView 在文档
 - 服务端口：1–65535，默认 3080。
 - 用户手动选择的 Node.js 路径。
 - 推荐插件：设置中的勾选项直接读取和修改 DSH 默认 `web` profile。`dshmarket` 如果原本就在该 profile 中，会自动显示为已启用；`dsh-workspace-drop2add` 的安装源随 DshForMac 应用包提供。启动时会将该插件的旧本地 link（含旧包名）迁移到当前应用包内的资源，但不会覆盖用户自行从 registry 安装的同名包。变更后会重启 DSH 才生效，DshForMac 不维护第二份插件启用状态。
-- 后台任务提醒：本地插件随应用包提供，至少要求 DSH `0.1.5-rc.3`。启用不申请 macOS 系统通知授权；AppKit 面板仅在应用运行时显示，约 8 秒后消失，不提供待处理列表。关闭主窗口不终止服务。已启用的本地 link 在应用路径变化后会迁移到当前应用包；禁用时移除 web profile 中的对应插件。
+- 后台任务提醒：本地插件随应用包提供，历史 API 门槛为 DSH `0.1.5-rc.3`，低于当前应用整体门槛 `0.1.6`。启用不申请 macOS 系统通知授权；AppKit 面板仅在应用运行时显示，约 8 秒后消失，不提供待处理列表。关闭主窗口不终止服务。已启用的本地 link 在应用路径变化后会迁移到当前应用包；禁用时移除 web profile 中的对应插件。
 - 与系统通知的边界：提醒不进入通知中心或锁屏，不受系统专注模式管理；错过卡片后不可找回，应用退出或 Mac 睡眠时不可用。当前未签名和本地临时签名包在 macOS 26.6.2 实测无法取得系统通知授权（`UNErrorDomain` 错误 1），因此不尝试调用系统通知接口，也不引导用户到系统设置手动添加应用。
 
 ## WebView 安全
