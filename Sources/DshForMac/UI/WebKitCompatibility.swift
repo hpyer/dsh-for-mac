@@ -1,6 +1,26 @@
 import Foundation
 
 enum WebKitCompatibility {
+    /// DSH 0.2.0-rc.2 puts the conversation's percentage-height root behind
+    /// display:contents slot anchors. Size it as a flex item instead so WebKit
+    /// does not depend on percentage-height resolution through those anchors.
+    /// Stable slot/phase attributes keep this independent of CSS module hashes.
+    static let conversationLayoutScript = """
+    (() => {
+      if (document.getElementById('dsh-for-mac-conversation-layout')) return;
+      const style = document.createElement('style');
+      style.id = 'dsh-for-mac-conversation-layout';
+      style.textContent = `
+        [data-slot="main.conversation"] > [data-phase] {
+          flex: 1 1 0;
+          min-height: 0;
+          height: auto;
+        }
+      `;
+      (document.head || document.documentElement).appendChild(style);
+    })();
+    """
+
     /// DSH 0.1.6-alpha.2 focuses a row when the model menu opens. WebKit does
     /// not focus a button on mouse-down, so its blur has a null relatedTarget;
     /// DSH closes the menu before mouse-up can deliver the row's click.

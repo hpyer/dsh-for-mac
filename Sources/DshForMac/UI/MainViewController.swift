@@ -76,6 +76,13 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
         configuration.userContentController = contentController
         contentController.addUserScript(
             WKUserScript(
+                source: WebKitCompatibility.conversationLayoutScript,
+                injectionTime: .atDocumentEnd,
+                forMainFrameOnly: true
+            )
+        )
+        contentController.addUserScript(
+            WKUserScript(
                 source: WebKitCompatibility.terminalFontScript,
                 injectionTime: .atDocumentEnd,
                 forMainFrameOnly: true
