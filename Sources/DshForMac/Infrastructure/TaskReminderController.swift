@@ -36,14 +36,29 @@ final class TaskReminderController: NSObject {
     private var toastPanel: NSPanel?
     private var activeReminder: TaskReminder?
     private var toastTimer: Timer?
+    private let playCompletionSound: () -> Void
+
+    init(playCompletionSound: (() -> Void)? = nil) {
+        if let playCompletionSound {
+            self.playCompletionSound = playCompletionSound
+        } else {
+            // Crystal is the display name since macOS 11; the system file keeps
+            // its legacy Glass name. Load it directly to avoid user sound overrides.
+            let sound = NSSound(contentsOfFile: "/System/Library/Sounds/Glass.aiff", byReference: true)
+            self.playCompletionSound = { _ = sound?.play() }
+        }
+        super.init()
+    }
 
     func receive(kind: String, sessionId: String, key: String, isAppVisible: Bool) {
         guard !isAppVisible, gate.accept(kind: kind, sessionId: sessionId, key: key) else { return }
         showToast(for: TaskReminder(kind: kind, sessionId: sessionId))
+        if kind == "completed" { playCompletionSound() }
     }
 
     func sendTestReminder() {
         showToast(for: TaskReminder(kind: "test", sessionId: ""))
+        playCompletionSound()
     }
 
     func dismissToast() {
@@ -114,7 +129,7 @@ final class TaskReminderController: NSObject {
         background.addSubview(closeButton)
 
         let detail = NSTextField(labelWithString: isTest
-            ? "这是一条应用内测试提醒"
+            ? "测试提醒与 Crystal 完成音"
             : "点击下方按钮返回对应会话")
         detail.textColor = .secondaryLabelColor
         detail.font = .systemFont(ofSize: 12)

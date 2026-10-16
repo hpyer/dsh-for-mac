@@ -172,7 +172,7 @@ final class SettingsViewController: NSViewController {
         testTaskReminderButton.action = #selector(sendTestTaskReminder)
         testTaskReminderButton.controlSize = .small
         testTaskReminderButton.isEnabled = false
-        testTaskReminderButton.toolTip = "只测试 DshForMac 的浮动提醒卡片，不验证 DSH 插件事件。"
+        testTaskReminderButton.toolTip = "测试 DshForMac 的浮动提醒卡片和 Crystal 任务完成提示音，不验证 DSH 插件事件。"
         pluginStatusLabel.textColor = .secondaryLabelColor
         pluginStatusLabel.maximumNumberOfLines = 3
         pluginStatusLabel.isHidden = true

@@ -36,7 +36,7 @@ DSH Market 的重启请求使用独立桥接：页面世界的 fetch 与启动�
 
 推荐插件中的 `dsh-workspace-drop2add` 使用混合桥接：插件加载后以一次性令牌向原生 WebView 握手；只有握手成功，原生层才会截获左侧栏内从 Finder 拖入的单个目录，并将真实绝对路径回传给插件创建 DSH 工作区。右侧和其他区域的拖放仍交给 DSH。插件未安装、已禁用或尚未握手时，原生层不会拦截任何拖放。项目自研插件均在 `dsh-plugins/` 这一 pnpm workspace 根目录下管理。
 
-后台任务提醒由用户在设置中明确启用本地 `dsh-task-notifications` 插件后生效。插件从 DSH 会话服务读取运行状态与待处理交互，WebView 通过随机令牌把事件类型、会话 ID 和去重键传给原生层；提醒内容不包含标题、工作目录或会话正文。原生层只在应用不在前台时短暂显示不激活应用的 AppKit 面板，不保留待处理列表或历史；点击卡片按钮会激活窗口并调用 DSH 的 `uiWorkspace.openSession`。设置中的测试按钮可在前台显示同款面板，不调用 DSH 会话。DSH `0.1.5-rc.3` 起读取 `uiSession.pendingInteractions` 与会话列表；`0.1.6-alpha.2` 起优先读取统一的 `uiSession.sessionStatus`。可读到 `turn/end` 事件时只把 `completed` 作为“已完成”；未保留的会话无法读取事件原因，运行转为停止时使用“已结束”。首次订阅的状态只作基线，不重放提醒。插件不启动额外服务，且只有用户选择启用时才修改 DSH web profile。
+后台任务提醒由用户在设置中明确启用本地 `dsh-task-notifications` 插件后生效。插件从 DSH 会话服务读取运行状态与待处理交互，WebView 通过随机令牌把事件类型、会话 ID 和去重键传给原生层；提醒内容不包含标题、工作目录或会话正文。原生层只在应用不在前台时短暂显示不激活应用的 AppKit 面板，不保留待处理列表或历史；点击卡片按钮会激活窗口并调用 DSH 的 `uiWorkspace.openSession`。仅通过既有前后台判断和去重门槛的 `completed` 事件，由原生 `NSSound` 直接读取 `/System/Library/Sounds/Glass.aiff`，播放一次系统设置中名为 Crystal 的提示音；`attention`、`ended`、无效或重复事件不播放完成音。Crystal 是 macOS 11 Big Sur 起的显示名称，系统文件保留 Glass 名称；直接读取系统文件避免 `NSSound(named:)` 搜索到用户自定义的同名音效。播放器保留声音对象，使用默认音频输出，不加载 Web 音频或增加服务。设置中的测试按钮可在前台显示同款面板并试听同一完成音，不调用 DSH 会话。DSH `0.1.5-rc.3` 起读取 `uiSession.pendingInteractions` 与会话列表；`0.1.6-alpha.2` 起优先读取统一的 `uiSession.sessionStatus`。可读到 `turn/end` 事件时只把 `completed` 作为“已完成”；未保留的会话无法读取事件原因，运行转为停止时使用“已结束”。首次订阅的状态只作基线，不重放提醒。插件不启动额外服务，且只有用户选择启用时才修改 DSH web profile。
 
 ## 启动与运行时流程
 

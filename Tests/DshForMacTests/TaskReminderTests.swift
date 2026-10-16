@@ -1,7 +1,32 @@
+import AppKit
 import XCTest
 @testable import DshForMac
 
 final class TaskReminderTests: XCTestCase {
+    @MainActor
+    func testCompletionSoundFollowsBackgroundCompletionGateAndCanBePreviewed() {
+        _ = NSApplication.shared
+        var playCount = 0
+        let controller = TaskReminderController(playCompletionSound: { playCount += 1 })
+        defer { controller.dismissToast() }
+
+        controller.receive(kind: "completed", sessionId: "session-1", key: "foreground", isAppVisible: true)
+        controller.receive(kind: "attention", sessionId: "session-1", key: "attention", isAppVisible: false)
+        controller.receive(kind: "ended", sessionId: "session-1", key: "ended", isAppVisible: false)
+        controller.receive(kind: "unknown", sessionId: "session-1", key: "unknown", isAppVisible: false)
+        controller.receive(kind: "completed", sessionId: "", key: "invalid", isAppVisible: false)
+        XCTAssertEqual(playCount, 0)
+
+        controller.receive(kind: "completed", sessionId: "session-1", key: "completed-1", isAppVisible: false)
+        controller.receive(kind: "completed", sessionId: "session-1", key: "completed-1", isAppVisible: false)
+        XCTAssertEqual(playCount, 1)
+
+        controller.receive(kind: "completed", sessionId: "session-2", key: "completed-2", isAppVisible: false)
+        XCTAssertEqual(playCount, 2)
+        controller.sendTestReminder()
+        XCTAssertEqual(playCount, 3)
+    }
+
     func testDuplicateAndInvalidBridgeEventsAreIgnored() {
         var gate = TaskReminderGate()
         let first = gate.accept(kind: "attention", sessionId: "session-1", key: "event-1")
