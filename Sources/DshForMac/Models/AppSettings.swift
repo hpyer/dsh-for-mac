@@ -1,7 +1,7 @@
 import Foundation
 
 enum AppMetadata {
-    static let version = "0.4.3"
+    static let version = "0.4.4"
     /// Bump only when a release intentionally stops supporting older DSH runtimes.
     static let minimumSupportedDSHVersion = "0.1.6"
 }
