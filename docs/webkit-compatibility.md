@@ -36,6 +36,16 @@ WebKit 的原生支持时间可参见 [Safari 15.4](https://webkit.org/blog/1244
 
 ## 验证
 
+### 文档二进制响应与 Blob 类型身份
+
+2026-10-16 针对 `workspaceFiles/readBytes failed: connection: invalid binary response fields`，检查本机 DSH `0.2.1-alpha.2`、`0.2.1-alpha.4` 的连接与文档预览发布代码。`parseBinaryResponse` 通过原生 `Response.formData()` 解码附件，并要求附件满足 `instanceof Blob`。原 PDF Worker 补丁将全局 Blob 替换为其子类，原生 File、Blob.slice、Response.blob/formData 返回对象不属于这个子类，因而被当作非法字段拒绝。真实 WKWebView 回归测试在修复前复现这些类型身份失败及二进制读取失败。
+
+修复仅将 Blob 构造包装改为 Proxy + Reflect.construct，保留原生 prototype 与子类 newTarget；可识别的 PDF Worker 仍注入同一套兼容代码，普通 Blob 参数直接交给原生构造器，不修改 DSH 响应或放宽上游校验。
+
+两个版本中，Word（doc/docx）和 PPT（ppt/pptx）在转换预览前先通过 readBytes 读取一个字节以校验文件访问；Excel（xlsx/xls/csv/tsv）、PDF、图片、HTML 及 HTML 相对资源也走字节读取，均可能被同一错误阻断。文本、Markdown 与代码正文使用分页文本读取，不直接依赖这个二进制校验；其关联图片等资源另需检查。
+
+新增测试在真实 WKWebView 强制触发兼容包装，验证 File、slice、Response.blob、Blob 子类，以及原生 multipart 解码后的类型与字节。覆盖代表性的 Word/PPT 单字节响应、Excel/PDF/图片/HTML/CSV/TSV 响应及空附件；测试载荷为合成字节，不是完整文档，不宣称已验证各格式渲染。完整 `swift test` 通过 58 项，原有真实 PDF Worker 测试也通过。用户原会话、Office 转换服务及旧版 macOS 的完整预览仍需人工复验。
+
 ### 回退旧版 DSH 时的草稿兼容
 
 2026-10-10 使用 Xcode 调试构建和 LLDB 运行真实 DSH 页面，发现 0.2.0-rc.2 的外层及滚动区域均正常填满窗口，实际为空的是 `conversation.session`：恢复草稿时在 `setDraft` 中对非字符串调用 `replace`，触发 TypeError 并卸载该插槽。这不是已复现的外层高度塌缩；仅靠扩大高度补丁不能恢复消息。此前未提交的外层高度链改动已撤回，保留原有对话根节点 flex 补丁。

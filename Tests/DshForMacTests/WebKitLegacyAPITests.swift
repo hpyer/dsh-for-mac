@@ -129,6 +129,71 @@ final class WebKitLegacyValueTests: XCTestCase {
 
 @MainActor
 final class WebKitLegacyBrowserTests: XCTestCase {
+    func testPDFWorkerShimPreservesNativeBlobAndFileIdentity() async throws {
+        let webView = try await makeWebView(setup: "window.originalBlob = Blob; window.originalFile = File; globalThis.Iterator = undefined;")
+        let values = try await evaluate("""
+        const file = new File(['document'], 'test.docx');
+        const blob = new Blob(['document']);
+        const sliced = blob.slice(1);
+        const responseBlob = await new Response('document').blob();
+        class DerivedBlob extends Blob {}
+        const derived = new DerivedBlob(['derived']);
+        return {
+          wrapped: Blob !== originalBlob,
+          prototype: Blob.prototype === originalBlob.prototype,
+          file: file instanceof Blob && file instanceof originalFile,
+          sliced: sliced instanceof Blob && await sliced.text() === 'ocument',
+          response: responseBlob instanceof Blob && await responseBlob.text() === 'document',
+          derived: derived instanceof DerivedBlob && derived instanceof Blob && !(blob instanceof DerivedBlob)
+        };
+        """, in: webView)
+        for key in ["wrapped", "prototype", "file", "sliced", "response", "derived"] {
+            XCTAssertEqual(values[key] as? Bool, true, key)
+        }
+    }
+
+    func testDocumentBinaryResponsesPassDSHBlobValidationWithPDFWorkerShim() async throws {
+        let webView = try await makeWebView(setup: "window.originalBlob = Blob; globalThis.Iterator = undefined;")
+        let values = try await evaluate("""
+        // Exercise the native multipart decoder and the Blob guard used by
+        // DSH 0.2.1-alpha.2/alpha.4 parseBinaryResponse, before any renderer runs.
+        const cases = [
+          ['docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', [80]],
+          ['pptx', 'application/vnd.openxmlformats-officedocument.presentationml.presentation', [80]],
+          ['xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', [80, 75, 3, 4, 0, 255]],
+          ['pdf', 'application/pdf', [37, 80, 68, 70, 0, 255]],
+          ['png', 'image/png', [137, 80, 78, 71, 0, 255]],
+          ['html', 'text/html', [60, 104, 116, 109, 108, 62]],
+          ['csv', 'text/csv', [97, 44, 98, 10]],
+          ['tsv', 'text/tab-separated-values', [97, 9, 98, 10]],
+          ['empty', 'application/octet-stream', []]
+        ];
+        const results = {};
+        for (const [extension, type, bytes] of cases) {
+          const envelope = { type: 'server-response', rpcId: 'test',
+            result: { ok: true, value: { data: null } },
+            attachments: [{ codec: 'bytes', part: 'attachment-0', path: ['data'] }] };
+          const form = new FormData();
+          form.append('metadata', JSON.stringify(envelope));
+          form.append('attachment-0', new originalBlob([new Uint8Array(bytes)], { type }), 'test.' + extension);
+          const body = await new Response(form).formData();
+          const fields = new Map(body);
+          const metadata = fields.get('metadata');
+          if (typeof metadata !== 'string') throw new TypeError('connection: invalid binary response fields');
+          const parsed = JSON.parse(metadata);
+          const attachment = parsed.attachments[0];
+          const data = fields.get(attachment.part);
+          if (!(data instanceof Blob)) throw new TypeError('connection: invalid binary response fields');
+          parsed.result.value.data = new Uint8Array(await data.arrayBuffer());
+          results[extension] = parsed.result.value.data.join(',') === bytes.join(',');
+        }
+        return results;
+        """, in: webView)
+        for key in ["docx", "pptx", "xlsx", "pdf", "png", "html", "csv", "tsv", "empty"] {
+            XCTAssertEqual(values[key] as? Bool, true, key)
+        }
+    }
+
     func testBufferTransfersDetachSourcesAndFailedClonesPreserveThem() async throws {
         let webView = try await makeWebView(setup: "structuredClone = undefined; ArrayBuffer.prototype.transferToFixedLength = undefined;")
         let values = try await evaluate("""

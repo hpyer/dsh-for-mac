@@ -14,6 +14,7 @@
 - 兼容旧版 macOS（最低 macOS 11）是核心要求。DSH 已内置某项功能，不代表旧版系统 WebKit 已具备其依赖的 API；移除原生重复功能时，须保留必要的 WebKit 兼容层。
 - 文件与产出物（含 PDF）预览由 DSH 内置功能处理，不保留原生预览栏、渲染器或文件打开 RPC 拦截。会话与 PDF 所需的 API/Worker 兼容补丁继续保留，只在系统缺少对应 API 时补齐，不修改受管 DSH 包。
 - 兼容补丁须依据精确版本的浏览器发布代码调用审计，区分原生 API、库方法和上游已提供的回退。补丁保持原生实现，页面与 PDF Worker 共用安装器；structuredClone 不通过 JSON 丢失数据，ArrayBuffer 转移须实际脱离源缓冲区。不能完整模拟的宿主对象明确拒绝，不伪造图形或垃圾回收能力。当前审计范围和实测边界见 [WebKit 兼容审计](webkit-compatibility.md)。
+- PDF Worker 构造兼容不得改变原生 Blob 的 prototype 或破坏 File、slice、Response.blob/formData 返回对象的 `instanceof Blob` 语义，须覆盖 DSH multipart 二进制响应的类型校验与字节保真回归测试。
 - DSH Market 重启功能使用独立桥接，仅处理同源 `POST /dsh-market/restart`；原生层校验本机主框架与私有令牌，不读取文件打开请求正文。
 
 ## 菜单栏控制

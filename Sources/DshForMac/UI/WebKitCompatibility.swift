@@ -253,16 +253,22 @@ enum WebKitCompatibility {
           `(${installStandardCompatibility.toString()})(globalThis);\n`
           + `(${installLegacyCompatibility.toString()})(globalThis);\n`
           + `(${installIteratorCompatibility.toString()})(globalThis);\n`;
-        globalThis.Blob = class Blob extends NativeBlob {
-          constructor(parts, options) {
+        // Keep the native prototype: File, slice(), Response.blob() and
+        // Response.formData() return native Blobs. A subclass replacement makes
+        // those fail DSH's `instanceof Blob` binary attachment validation.
+        globalThis.Blob = new Proxy(NativeBlob, {
+          construct(target, args, newTarget) {
+            const [parts, options] = args;
             const isDSHPDFWorker = options?.type === 'text/javascript'
               && Array.isArray(parts)
               && parts.some((part) => typeof part === 'string'
                 && part.includes('globalThis.pdfjsWorker')
                 && part.includes('Iterator.prototype.join'));
-            super(isDSHPDFWorker ? [workerCompatibilityScript, ...parts] : parts, options);
+            return Reflect.construct(target,
+              isDSHPDFWorker ? [[workerCompatibilityScript, ...parts], options] : args,
+              newTarget);
           }
-        };
+        });
       }
 
       if (typeof AbortSignal === 'undefined' || typeof AbortController === 'undefined') return;
