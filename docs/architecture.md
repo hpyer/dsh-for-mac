@@ -49,7 +49,15 @@ DSH Market 的重启请求使用独立桥接：页面世界的 fetch 与启动�
 
 子进程 PATH 依次包含选定 Node 与检测到的 pnpm 目录、应用继承的路径、`/etc/paths` 与按文件名排序的 `/etc/paths.d` 条目，最后补齐 Intel/Apple Silicon 的 Homebrew bin/sbin 和基础系统目录，并去重。系统文件缺失或不可读时继续使用兜底路径；不执行 shell 来获取环境。这样从 Finder 启动时，DSH 内的交互式 zsh 也能找到 Homebrew 安装的 fnm、direnv、starship 等配置依赖；原生启动器不主动执行或修改用户 shell 配置。
 
-提升最低门槛是为避开旧会话格式读取器。上游 [V3 → V4 变更](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/persistence-changes/2026-09-16-session-format-v4.md) 明确 V3 读取器拒绝较新一代会话；本应用沿用 DSH 的数据路径和迁移，不改写会话文件。此门槛不保证高于最低版本的任意两版之间可安全回退；系统最低部署目标仍为 macOS 11，WebKit 兼容补丁继续保留。
+提升最低门槛是为避开旧会话格式读取器。上游 [V3 → V4 变更](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/persistence-changes/2026-09-16-session-format-v4.md) 明确 V3 读取器拒绝较新一代会话；本应用沿用 DSH 的数据路径和常规迁移。此门槛不保证高于最低版本的任意两版之间可安全回退；系统最低部署目标仍为 macOS 11，WebKit 兼容补丁继续保留。
+
+### 用户触发的会话兼容修复
+
+`DSHSessionRepairBridge` 只在 DSH 对话历史的错误元素出现未知必需事件错误时添加“修复会话格式…”按钮。桥接只发送私有令牌、会话 ID 和日志路径；原生层验证配置的本机地址与主框架。扫描不读取普通消息元素，不自动开始修复。目标版本不按发布号设白名单：须满足应用最低版本要求，运行时核对受管主包身份和精确版本、`SESSION_FORMAT_VERSION`、格式目录的 `currentVersion` 与严格恢复 API，并读取该版本实际的 `KNOWN_SESSION_EVENT_TYPES`。同为 V4 不代表事件集合相同。只对当前读取器不认识的 `job/registered`、`job/settled` 增加 `ignorable: true`，保留其载荷、序号和所有其他记录；已经认识这些事件的版本无需改写。不承诺任意版本无损降级。旧版不能恢复这些新版任务状态。其他必需事件或改变的载荷必须通过目标读取器的严格校验，否则拒绝。
+
+`DSHRuntimeManager.operateOnSession` 直接使用检测到的 Node 执行随应用提供的 `session-repair.mjs`，不安装运行时或插件，不改写受管 DSH 包。辅助程序从精确受管包解析会话包、格式目录与原生 `node-addon-system/flock` 支持。只读分析返回摘要与事件数；用户确认后停止受管 DSH，取得上游 `session.lock` 的排他锁，比较日志摘要。先将原压缩字节写入 `session-backups/<uuid>.zstd`，同步到磁盘并校验 SHA-256，随后生成临时修复日志，经目标版本 `sessionFormatCatalog` 的严格恢复与安装版 `Session` 校验后发布。JSON 备份记录包含原始和修复后摘要、目标版本与会话位置。日志及备份文件为 0600，新备份目录为 0700；替换采用同目录临时文件、原子 rename 与目录同步。仅接受默认数据目录中的规范 V4 文件，拒绝符号链接。压缩输入限制为 64 MiB，解压限制为 256 MiB；逐帧解析 Zstandard，验证每一帧及完整 JSONL，不修复损坏或截断尾部。辅助程序只输出固定错误码、摘要与计数，不转发第三方异常或会话正文。
+
+“文件 → 恢复会话备份…”校验原始备份摘要与当前日志是否仍为对应修复结果，再备份当前日志并原子恢复原压缩字节。修复后新增历史或备份损坏时拒绝覆盖；恢复后的原始会话可能需要新版 DSH。原始备份和恢复前快照不自动清理，辅助程序异常退出或应用中断时保留已完成备份。该流程不处理附件、插件配置、旧格式迁移或未知第三方事件。
 
 DSH 0.1.6 的 xterm DOM 渲染器只指定普通等宽字体。WebView 在文档加载后为 `.xterm .xterm-rows` 添加本机 Nerd Font 的显式字体回退，优先使用 MesloLGS NF，覆盖私用区图标（含 Powerline 分隔符）。字体映射只作用于私用区，普通文字沿用 DSH 原有字体和字符宽度，不影响聊天页面。没有安装候选字体时沿用原有回退，不下载字体，也不修改受管 DSH 包。
 

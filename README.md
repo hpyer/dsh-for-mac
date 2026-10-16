@@ -95,6 +95,8 @@ sudo xattr -rd com.apple.quarantine /Applications/DshForMac.app
 
 DSH 的配置、会话和插件仍由 DSH 使用其上游默认用户数据路径管理。DshForMac 只在 `~/Library/Application Support/DshForMac/runtimes/` 下保存受管 DSH 版本。
 
+降级 DSH 后，若历史加载报未知事件错误，可点击错误下方的“修复会话格式…”。修复目标使用当前受管 DSH 版本，不固定某个发布号：须满足应用最低版本要求，并提供 V4 严格会话读取器和可用的会话锁。当前仅处理目标版本不认识的 `job/registered`、`job/settled` 记录，保留消息和事件内容，但旧版不能恢复这些新版后台任务的状态；其他不支持的事件或格式会拒绝修复。同为 V4 不代表事件集合相同，结果仍须通过当前版本的实际读取校验。确认后先备份原始压缩日志并校验，再由目标版本严格校验临时修复结果，最后替换并重启 DSH。备份位于 `~/Library/Application Support/DshForMac/session-backups/`，不自动清理；可通过“文件 → 恢复会话备份…”撤销，恢复前也会备份当前日志。若修复后已有新增历史或备份校验失败，将停止恢复以避免覆盖；原始会话可能需要切回新版 DSH 才能读取。
+
 ## 从源码构建
 
 项目使用 Swift Package Manager：

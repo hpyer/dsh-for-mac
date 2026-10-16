@@ -277,6 +277,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
         let fileMenuItem = NSMenuItem()
         let fileMenu = NSMenu(title: "文件")
         fileMenu.addItem(NSMenuItem(title: "关闭窗口", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
+        fileMenu.addItem(.separator())
+        let restoreSessionItem = NSMenuItem(title: "恢复会话备份…", action: #selector(restoreSessionBackup), keyEquivalent: "")
+        restoreSessionItem.target = self
+        fileMenu.addItem(restoreSessionItem)
         fileMenuItem.submenu = fileMenu
         mainMenu.addItem(fileMenuItem)
 
@@ -441,6 +445,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
 
     @objc private func restartDeepSeekHarness() {
         mainViewController?.restartDeepSeekHarness()
+    }
+
+    @objc private func restoreSessionBackup() {
+        showMainWindow()
+        mainViewController?.restoreSessionBackup()
     }
 
     @objc private func showMainWindow() {

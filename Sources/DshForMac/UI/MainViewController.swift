@@ -24,6 +24,8 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     private let webOperationSpinner = NSProgressIndicator()
     private let reconnectButton = NSButton(title: "重新连接", target: nil, action: nil)
     private let marketRestartBridgeToken = UUID().uuidString
+    private let sessionRepairBridgeToken = UUID().uuidString
+    private var isRepairingSession = false
     private var workspaceDrop2AddBridgeToken: String?
     private var taskNotificationBridgeToken: String?
     private var pendingNotificationSessionId: String?
@@ -33,6 +35,10 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
         contentController.add(
             WeakScriptMessageHandler(owner: self),
             name: DSHMarketRestartBridge.handlerName
+        )
+        contentController.add(
+            WeakScriptMessageHandler(owner: self),
+            name: DSHSessionRepairBridge.handlerName
         )
         contentController.add(
             WeakScriptMessageHandler(owner: self),
@@ -66,6 +72,10 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
             )
         )
         configuration.userContentController = contentController
+        contentController.addUserScript(WKUserScript(
+            source: DSHSessionRepairBridge.script(token: sessionRepairBridgeToken),
+            injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .page
+        ))
         contentController.addUserScript(
             WKUserScript(
                 source: WebKitCompatibility.conversationLayoutScript,
@@ -116,7 +126,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     private var webRecoveryIdentifier: UUID?
     private var webRecoveryNeeded = false
     private var failedWebLoads = 0
-    var isUpdateOperationInProgress: Bool { isCheckingForUpdates || isDownloadingUpdate }
+    var isUpdateOperationInProgress: Bool { isCheckingForUpdates || isDownloadingUpdate || isRepairingSession }
     var canDownloadUpdate: Bool {
         guard !isUpdateOperationInProgress, !isLaunchingDeepSeekHarness,
               let version = AppSettings.shared.availableUpdateVersion else { return false }
@@ -251,7 +261,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     }
 
     private func restartDeepSeekHarness(using runtime: NodeRuntime, preferredVersion: String? = nil) {
-        guard !isLaunchingDeepSeekHarness else { return }
+        guard !isLaunchingDeepSeekHarness, !isRepairingSession else { return }
         isLaunchingDeepSeekHarness = true
         rollbackButton.isHidden = true
         let version = runtimeManager.runtimeVersionForRestart(preferredVersion: preferredVersion)
@@ -395,6 +405,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     }
 
     func selectDSHVersion(_ version: String?) {
+        guard !isRepairingSession else { return }
         AppSettings.shared.selectedRuntimeVersion = version
         guard !isLaunchingDeepSeekHarness else { return }
         let status = NodeRuntimeDetector().detect(preferredNodeURL: preferredNodeURL)
@@ -986,12 +997,124 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
             return
         }
 
+        if message.name == DSHSessionRepairBridge.handlerName {
+            guard let url = message.frameInfo.request.url, isLocalDSHURL(url),
+                  payload["token"] as? String == sessionRepairBridgeToken,
+                  let request = DSHSessionRepairRequest(payload: payload) else { return }
+            repairSession(request)
+            return
+        }
+
         guard message.name == DSHMarketRestartBridge.handlerName,
               let url = message.frameInfo.request.url, isLocalDSHURL(url),
               payload["token"] as? String == marketRestartBridgeToken
         else { return }
 
         restartDeepSeekHarness()
+    }
+
+    private func repairSession(_ request: DSHSessionRepairRequest) {
+        guard !isLaunchingDeepSeekHarness, !isUpdateOperationInProgress,
+              let version = activeDSHVersion,
+              case let .ready(runtime) = NodeRuntimeDetector().detect(preferredNodeURL: preferredNodeURL)
+        else { return }
+        isRepairingSession = true
+        cancelWebRecovery()
+        showWebOperationStatus("正在检查会话兼容性…")
+        Task { [weak self] in
+            guard let self else { return }
+            var serviceStopped = false
+            do {
+                let plan = try await self.runtimeManager.operateOnSession(
+                    action: "analyze", request: request, version: version, using: runtime
+                )
+                self.hideWebOperationStatus()
+                guard let digest = plan.digest, let changed = plan.changed else {
+                    throw DSHSessionRepairError(code: "operationFailed")
+                }
+                let alert = NSAlert()
+                alert.messageText = "按 DSH \(version) 兼容修复？"
+                alert.informativeText = "将先备份并校验原始压缩日志，再生成临时修复文件，由当前版本读取器校验通过后替换。\n\n本次会将 \(changed) 条新版后台任务记录标记为旧版可忽略，保留消息、事件内容和序号。旧版无法恢复这些新版任务的状态。操作会重启 DSH，请先结束其他会话中的运行任务。\n\n可从“文件 → 恢复会话备份…”撤销；修复后新增历史时将拒绝覆盖。"
+                alert.addButton(withTitle: "备份并修复")
+                alert.addButton(withTitle: "取消")
+                guard alert.runModal() == .alertFirstButtonReturn else {
+                    self.isRepairingSession = false
+                    return
+                }
+                self.showWebOperationStatus("正在备份、校验并修复会话…")
+                serviceStopped = true
+                let result = try await self.runtimeManager.operateOnSession(
+                    action: "repair", request: request, digest: digest, version: version, using: runtime
+                )
+                self.hideWebOperationStatus()
+                let completed = NSAlert()
+                completed.messageText = "会话兼容修复已完成"
+                completed.informativeText = "已通过 DSH \(version) 的严格读取校验。原始日志备份已保留，可通过“文件 → 恢复会话备份…”撤销。接下来将重启 DSH；页面加载后请重新打开原会话。"
+                completed.addButton(withTitle: "重新加载页面")
+                completed.addButton(withTitle: "显示原始备份")
+                if completed.runModal() == .alertSecondButtonReturn, let manifest = result.manifest {
+                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: manifest)])
+                }
+            } catch {
+                self.presentSessionOperationError(error)
+            }
+            self.isRepairingSession = false
+            self.hideWebOperationStatus()
+            if serviceStopped { self.restartDeepSeekHarness(using: runtime, preferredVersion: version) }
+        }
+    }
+
+    func restoreSessionBackup() {
+        guard !isLaunchingDeepSeekHarness, !isUpdateOperationInProgress,
+              let version = activeDSHVersion ?? runtimeManager.preferredRuntimeVersion(),
+              case let .ready(runtime) = NodeRuntimeDetector().detect(preferredNodeURL: preferredNodeURL)
+        else { return }
+        let panel = NSOpenPanel()
+        panel.title = "恢复会话原始备份"
+        panel.message = "选择会话备份的 JSON 记录。恢复会保留当前日志副本；原始会话可能需要新版 DSH 才能读取。"
+        panel.allowedFileTypes = ["json"]
+        panel.directoryURL = try? runtimeManager.sessionBackupsDirectory()
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let manifest = panel.url else { return }
+        let alert = NSAlert()
+        alert.messageText = "恢复原始会话日志？"
+        alert.informativeText = "将校验备份完整性，备份当前日志，再恢复原始压缩日志并重启 DSH。若修复后已有新消息，将停止恢复以避免覆盖。请先结束其他会话中的运行任务。"
+        alert.addButton(withTitle: "恢复备份")
+        alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        isRepairingSession = true
+        cancelWebRecovery()
+        showWebOperationStatus("正在校验并恢复原始备份…")
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                _ = try await self.runtimeManager.operateOnSession(
+                    action: "restore", manifest: manifest, version: version, using: runtime
+                )
+                let completed = NSAlert()
+                completed.messageText = "已恢复原始日志"
+                completed.informativeText = "原始压缩日志已按备份完整恢复，修复后的版本也已备份。若当前 DSH 无法读取，请切换回创建该会话的新版 DSH。"
+                completed.runModal()
+            } catch { self.presentSessionOperationError(error) }
+            self.isRepairingSession = false
+            self.hideWebOperationStatus()
+            self.restartDeepSeekHarness(using: runtime, preferredVersion: version)
+        }
+    }
+
+    private func presentSessionOperationError(_ error: Error) {
+        hideWebOperationStatus()
+        let alert = NSAlert()
+        alert.messageText = "会话操作未完成"
+        // Process/codec errors can contain private data. Only our fixed diagnostics are displayed.
+        alert.informativeText = (error as? DSHSessionRepairError)?.localizedDescription
+            ?? DSHSessionRepairError(code: "operationFailed").localizedDescription
+        alert.addButton(withTitle: "确定")
+        alert.addButton(withTitle: "查看备份")
+        if alert.runModal() == .alertSecondButtonReturn,
+           let directory = try? runtimeManager.sessionBackupsDirectory() {
+            NSWorkspace.shared.open(directory)
+        }
     }
 
     private func registerWorkspaceDrop2AddBridge(_ payload: [String: Any]) {

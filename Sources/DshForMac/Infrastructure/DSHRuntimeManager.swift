@@ -472,6 +472,59 @@ final class DSHRuntimeManager {
         preferredVersion ?? settings.selectedRuntimeVersion ?? lastAttemptedVersion ?? preferredRuntimeVersion()
     }
 
+    func sessionBackupsDirectory() throws -> URL {
+        try applicationSupportDirectory().appendingPathComponent("session-backups", isDirectory: true)
+    }
+
+    /// Runs only against the selected managed package, using the user's detected Node.
+    /// The helper returns counts/digests; session text and third-party errors never leave it.
+    func operateOnSession(
+        action: String,
+        request: DSHSessionRepairRequest? = nil,
+        digest: String? = nil,
+        manifest: URL? = nil,
+        version: String,
+        using runtime: NodeRuntime
+    ) async throws -> DSHSessionRepairResult {
+        guard DSHCompatibility.supports(version) else {
+            throw DSHSessionRepairError(code: "unsupportedVersion")
+        }
+        guard let script = Bundle.module.url(forResource: "session-repair", withExtension: "mjs") else {
+            throw DSHSessionRepairError(code: "operationFailed")
+        }
+        let root = try applicationSupportDirectory()
+        let directory = runtimeVersionsDirectory(in: root).appendingPathComponent(version, isDirectory: true)
+        var payload: [String: Any] = [
+            "action": action, "version": version, "runtimeDirectory": directory.path,
+            "sessionsRoot": fileManager.homeDirectoryForCurrentUser.appendingPathComponent(".dsh/sessions").path,
+            "backupRoot": try sessionBackupsDirectory().path,
+        ]
+        payload["sessionId"] = request?.sessionId
+        payload["file"] = request?.file
+        payload["digest"] = digest
+        payload["manifest"] = manifest?.path
+        let data = try JSONSerialization.data(withJSONObject: payload)
+        guard let argument = String(data: data, encoding: .utf8) else {
+            throw DSHSessionRepairError(code: "operationFailed")
+        }
+        if action != "analyze" {
+            await stopRunningProcess()
+            // Also handles a surviving managed process from an earlier app launch.
+            try await stopExistingManagedServer(in: root, port: settings.port)
+        }
+        let result = try await runToCompletion(
+            executableURL: runtime.nodeURL, arguments: ["--no-warnings", script.path, argument],
+            directoryURL: directory, environment: processEnvironment(for: runtime)
+        )
+        guard let output = result.standardOutput.data(using: .utf8),
+              let response = try? JSONDecoder().decode(DSHSessionRepairResult.self, from: output)
+        else { throw DSHSessionRepairError(code: "operationFailed") }
+        guard response.ok, result.exitCode == 0 else {
+            throw DSHSessionRepairError(code: response.code ?? "operationFailed")
+        }
+        return response
+    }
+
     /// `current` still points to the last healthy runtime when a new version fails.
     func rollbackRuntimeVersion(excluding failedVersion: String?) -> String? {
         guard let root = try? applicationSupportDirectory(),
