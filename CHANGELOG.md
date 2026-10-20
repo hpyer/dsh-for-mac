@@ -2,6 +2,15 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 的记录方式。
 
+## [0.4.5] - 2026-10-20
+
+- 最低兼容 DSH 版本：`0.1.6`。
+
+### 修复
+
+- 修复 Word 文档预览时出现 `workspaceFiles/readBytes failed: connection: invalid binary response fields` 的问题。保留原生 Blob/File 类型关系，使 DSH 正确识别二进制响应附件，同时保留 PDF Worker 的旧版 WebKit 兼容补丁。
+- 同时修复可能受同一问题影响的 PPT、Excel、PDF、图片、HTML 和 CSV/TSV 等预览的文件字节读取。
+
 ## [0.4.4] - 2026-10-16
 
 - 最低兼容 DSH 版本：`0.1.6`。
