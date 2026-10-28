@@ -47,6 +47,10 @@ struct DSHUpdateCheckResult: Sendable {
     var version: String { release.version }
 }
 
+private struct DSHRuntimeMetadata: Codable {
+    let sourceTags: Set<String>
+}
+
 private struct DynamicCodingKey: CodingKey {
     var stringValue: String
     var intValue: Int?
@@ -287,10 +291,24 @@ final class DSHRuntimeManager {
             throw DSHRuntimeError.versionBelowMinimum(version)
         }
         guard let npmURL = runtime.npmURL else { throw DSHRuntimeError.npmUnavailable }
-        let release = try await resolveRelease(
+        let resolvedRelease = try await resolveRelease(
             tag: version, npmURL: npmURL, environment: processEnvironment(for: runtime)
         )
-        guard release.version == version else { throw DSHRuntimeError.metadataInvalid }
+        guard resolvedRelease.version == version else { throw DSHRuntimeError.metadataInvalid }
+        let environment = processEnvironment(for: runtime)
+        var sourceTags = Set<String>()
+        for tag in settings.updateTags {
+            if let taggedRelease = try? await resolveRelease(tag: tag, npmURL: npmURL, environment: environment),
+               taggedRelease.version == version
+            {
+                sourceTags.insert(tag)
+            }
+        }
+        let release = DSHRelease(
+            version: resolvedRelease.version,
+            integrity: resolvedRelease.integrity,
+            sourceTags: sourceTags.isEmpty ? ["manual"] : sourceTags
+        )
         try await downloadRelease(release, using: runtime, reportsProgress: false)
     }
 
@@ -328,7 +346,10 @@ final class DSHRuntimeManager {
         let rootDirectory = try applicationSupportDirectory()
         let runtimeDirectory = runtimeVersionsDirectory(in: rootDirectory)
             .appendingPathComponent(release.version, isDirectory: true)
-        if isReleaseInstalled(release, in: runtimeDirectory) { return }
+        if isReleaseInstalled(release, in: runtimeDirectory) {
+            try writeRuntimeMetadata(for: release, to: runtimeDirectory)
+            return
+        }
         // Never repair an installation while its server is running.
         if dshProcess?.isRunning == true,
            dshProcess?.currentDirectoryURL?.standardizedFileURL == runtimeDirectory.standardizedFileURL {
@@ -404,6 +425,7 @@ final class DSHRuntimeManager {
             throw DSHRuntimeError.nativeDependencyMissing("fs-ext/build/Release/fs_ext.node")
         }
         try verifyIntegrity(of: release, in: runtimeDirectory, packageManager: packageManager)
+        try writeRuntimeMetadata(for: release, to: runtimeDirectory)
     }
 
     private func hasInstalledPackage(named name: String, in runtimeDirectory: URL) -> Bool {
@@ -921,11 +943,46 @@ final class DSHRuntimeManager {
     private func removeOlderRuntimeVersions(in versionsDirectory: URL, currentVersion: String) throws {
         let protectedVersions = Set([currentVersion, settings.selectedRuntimeVersion].compactMap { $0 })
         let versions = versionDirectories(in: versionsDirectory)
-        var retainedVersions = Set(versions.prefix(5).map(\.version))
-        retainedVersions.formUnion(protectedVersions)
+        let taggedVersions = versions.map { version in
+            (version: version.version, tags: runtimeTags(for: version.url, version: version.version))
+        }
+        let retainedVersions = Self.retainedRuntimeVersions(taggedVersions, protectedVersions: protectedVersions)
         for version in versions where !retainedVersions.contains(version.version) {
             try fileManager.removeItem(at: version.url)
         }
+    }
+
+    nonisolated static func retainedRuntimeVersions(
+        _ versions: [(version: String, tags: Set<String>)],
+        protectedVersions: Set<String>
+    ) -> Set<String> {
+        var retained = protectedVersions
+        let tags = Set(versions.flatMap(\.tags))
+        for tag in tags {
+            let limit = tag == "latest" ? 3 : 2
+            retained.formUnion(versions.filter { $0.tags.contains(tag) }.prefix(limit).map(\.version))
+        }
+        return retained
+    }
+
+    private func runtimeTags(for directory: URL, version: String) -> Set<String> {
+        let metadataURL = directory.appendingPathComponent(".dshformac-runtime.json")
+        if let data = try? Data(contentsOf: metadataURL),
+           let metadata = try? JSONDecoder().decode(DSHRuntimeMetadata.self, from: data),
+           !metadata.sourceTags.isEmpty
+        {
+            return metadata.sourceTags
+        }
+        guard let parsed = SemanticVersion(string: version), let channel = parsed.prereleaseChannel else {
+            return ["latest"]
+        }
+        return [channel]
+    }
+
+    private func writeRuntimeMetadata(for release: DSHRelease, to directory: URL) throws {
+        let metadata = DSHRuntimeMetadata(sourceTags: release.sourceTags.isEmpty ? ["manual"] : release.sourceTags)
+        let data = try JSONEncoder().encode(metadata)
+        try data.write(to: directory.appendingPathComponent(".dshformac-runtime.json"), options: .atomic)
     }
 
     private func resolveUpdateRelease(

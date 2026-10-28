@@ -372,6 +372,18 @@ final class DSHUpdateTests: XCTestCase {
         XCTAssertEqual(commands.filter { $0 == "install --omit=dev --no-audit --no-fund" }.count, 1)
     }
 
+    func testRuntimeRetentionUsesIndependentTagLimits() {
+        let versions: [(version: String, tags: Set<String>)] = [
+            ("1.0.6", ["latest"]), ("1.0.5", ["latest"]), ("1.0.4", ["latest"]),
+            ("1.0.3", ["latest"]), ("1.1.3-alpha.3", ["alpha"]),
+            ("1.1.2-alpha.2", ["alpha"]), ("1.1.1-alpha.1", ["alpha"]),
+            ("1.2.2-rc.2", ["next"]), ("1.2.1-rc.1", ["next"]),
+            ("1.2.0-rc.0", ["next"]),
+        ]
+        let retained = DSHRuntimeManager.retainedRuntimeVersions(versions, protectedVersions: [])
+        XCTAssertEqual(retained, ["1.0.6", "1.0.5", "1.0.4", "1.1.3-alpha.3", "1.1.2-alpha.2", "1.2.2-rc.2", "1.2.1-rc.1"])
+    }
+
     func testRestartPrefersSelectedVersionAndExplainsMissingNativeModule() throws {
         let fixture = try Fixture()
         defer { fixture.cleanUp() }

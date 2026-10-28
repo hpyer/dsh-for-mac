@@ -6,6 +6,10 @@ struct SemanticVersion: Comparable, Equatable, Sendable {
     let patch: Int
     private let prerelease: [PrereleaseIdentifier]?
 
+    var prereleaseChannel: String? {
+        prerelease?.first?.value
+    }
+
     private enum PrereleaseIdentifier: Equatable, Sendable {
         case numeric(String)
         case text(String)
