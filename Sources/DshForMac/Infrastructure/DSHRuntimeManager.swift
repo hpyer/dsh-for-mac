@@ -335,7 +335,7 @@ final class DSHRuntimeManager {
             throw DSHRuntimeError.integrityMismatch
         }
         let environment = processEnvironment(for: runtime)
-        let packageManager = await packageManager(
+        var packageManager = await packageManager(
             for: runtime, npmURL: npmURL, environment: environment, reportsProgress: reportsProgress
         )
         let executableURL = runtimeDirectory.appendingPathComponent("node_modules/.bin/dsh")
@@ -347,12 +347,31 @@ final class DSHRuntimeManager {
         }
         try writeManifest(for: release, to: runtimeDirectory)
         try writePnpmWorkspaceConfig(to: runtimeDirectory)
-        let installResult = try await runToCompletion(
+        var installResult = try await runToCompletion(
             executableURL: packageManager.executableURL,
             arguments: packageManager.installArguments,
             directoryURL: runtimeDirectory,
             environment: environment
         )
+        if installResult.exitCode != 0, case .pnpm = packageManager {
+            // pnpm can reject a newly published dependency tree because of its
+            // version-specific build approval or lockfile behavior. npm uses
+            // the same registry and manifest, so retry there before exposing a
+            // transient package-manager incompatibility to the user.
+            if reportsProgress {
+                statusHandler("pnpm 安装失败，正在改用 npm 重试…")
+            }
+            try removeIncompleteInstallation(in: runtimeDirectory)
+            try writeManifest(for: release, to: runtimeDirectory)
+            try writePnpmWorkspaceConfig(to: runtimeDirectory)
+            packageManager = .npm(npmURL)
+            installResult = try await runToCompletion(
+                executableURL: packageManager.executableURL,
+                arguments: packageManager.installArguments,
+                directoryURL: runtimeDirectory,
+                environment: environment
+            )
+        }
         if installResult.exitCode != 0 {
             do {
                 guard fileManager.isExecutableFile(atPath: executableURL.path) else {

@@ -348,6 +348,30 @@ final class DSHUpdateTests: XCTestCase {
         XCTAssertTrue(!FileManager.default.fileExists(atPath: fixture.root.appendingPathComponent("DshForMac/runtimes/current").path))
     }
 
+    func testPnpmInstallFailureRetriesWithNpm() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let pnpm = fixture.root.appendingPathComponent("pnpm")
+        let script = #"""
+        #!/bin/sh
+        fixture_dir=$(/usr/bin/dirname "$0")
+        printf '%s\n' "$*" >> "$fixture_dir/commands"
+        exit 1
+        """#
+        try script.write(to: pnpm, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: pnpm.path)
+        let runtime = NodeRuntime(
+            nodeURL: fixture.runtime.nodeURL, npmURL: fixture.runtime.npmURL, pnpmURL: pnpm,
+            corepackURL: nil, npxURL: nil, version: fixture.runtime.version,
+            architecture: fixture.runtime.architecture
+        )
+        let manager = fixture.manager()
+        try await manager.downloadVersion("1.2.3", using: runtime)
+        let commands = try fixture.commands()
+        XCTAssertTrue(commands.contains("install --prod --no-frozen-lockfile --config.confirmModulesPurge=false"))
+        XCTAssertEqual(commands.filter { $0 == "install --omit=dev --no-audit --no-fund" }.count, 1)
+    }
+
     func testRestartPrefersSelectedVersionAndExplainsMissingNativeModule() throws {
         let fixture = try Fixture()
         defer { fixture.cleanUp() }
