@@ -5,12 +5,31 @@ enum WebKitCompatibility {
     /// display:contents slot anchors. Size it as a flex item instead so WebKit
     /// does not depend on percentage-height resolution through those anchors.
     /// Stable slot/phase attributes keep this independent of CSS module hashes.
+    ///
+    /// DSH is a viewport-sized app shell: every view scrolls inside its own
+    /// containers and the document itself never scrolls. Plugins can still
+    /// append inline nodes to <body> - a zero-sized sprite or filter holder SVG
+    /// is the common pattern - and WebKit gives such a node a line box anyway,
+    /// so the document ends up taller than the viewport. Once anything scrolls
+    /// the document, the whole shell shifts and the sidebar stops above the
+    /// window edge, leaving a strip of page background underneath; a scrollbar
+    /// gutter and canvas painting make it far more visible than in Chromium.
+    /// Clamp the document rather than patching individual plugins, so every
+    /// plugin with the same pattern stays covered. overflow: clip (Safari 16+)
+    /// also ignores programmatic scrolling; older WebKit keeps hidden, which
+    /// already blocks viewport scrolling.
     static let conversationLayoutScript = """
     (() => {
       if (document.getElementById('dsh-for-mac-conversation-layout')) return;
       const style = document.createElement('style');
       style.id = 'dsh-for-mac-conversation-layout';
       style.textContent = `
+        /* The shell owns the viewport; plugins must not scroll the document. */
+        html,
+        body {
+          overflow: hidden;
+          overflow: clip;
+        }
         [data-slot="main.conversation"] > [data-phase] {
           flex: 1 1 0;
           min-height: 0;

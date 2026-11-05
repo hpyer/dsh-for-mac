@@ -57,3 +57,26 @@ WebKit 的原生支持时间可参见 [Safari 15.4](https://webkit.org/blog/1244
 自动测试强制移除对应 API，验证数组不变性、空槽、负索引、循环克隆、共享视图、拒绝非法类型、大字体 Base64 和保留原生实现。在真实 WKWebView 中验证缓冲区脱离、克隆失败保留源数据、流取消/错误后的锁释放与 Response body 消费；真实 Worker 验证 PDF 字体缓冲区转移及 Base64。现有测试继续验证普通 Blob 不注入。
 
 旧系统仍需人工验证：模型菜单、定时任务列表、会话与轨迹、设置保存、内嵌终端、PDF 普通/嵌入字体及文字选择，覆盖 macOS 11 与 macOS 13。仅使用隔离的测试会话与文档。
+
+### 插件把文档撑高导致的底部条带（通用外壳钳制）
+
+2026-11-05 用真实 WKWebView 复验 DshForMac 正在运行的 DSH 页面（1280×660，macOS 26.6.2）：dsh-pet 挂载后 `document.scrollingElement.scrollHeight` 为 678，视口高 660。原因是插件向 `<body>` 末尾追加了一个 0×0 的内联滤镜 SVG，WebKit 仍为行内元素保留一个行高的行盒，文档因此比视口高 18px。文档一旦被滚动（滚轮、焦点或程序化滚动），整个外壳上移，侧边栏到不了窗口底边，底部露出页面背景（浅色主题下即此前报告的“白边”）。
+
+同一页面在本机 Electron 43.3.0（Chromium）对照测量也是 `scrollHeight 678 / clientHeight 660`：撑高文档不是 WebKit 独有，只是 Chromium 未滚动时表面看不出，而 WebKit 的滚动条与画布绘制让它更显眼。
+
+DSH 是固定视口的外壳：实测 landing、插件、自动化任务、更多各视图的文档 `scrollHeight` 都等于 `clientHeight`（660），滚动全部发生在内层容器（例如插件页的 `pageBody` 为 1369/660）。因此兼容层不再按插件选择器打补丁（原先针对 dsh-pet 的 `.pet-chat`、`svg[data-dsh-pet-alpha-fix]` 规则已移除），改为钳制文档滚动本身：
+
+```css
+html, body {
+  overflow: hidden;
+  overflow: clip;
+}
+```
+
+`overflow: clip`（Safari 16+）同时阻止程序化滚动；更旧的 WebKit 回退到 `hidden`，实测已能阻止视口滚动。真实页面复验：向 body 追加 240px 块后 `scrollHeight` 明显大于视口，但 `window.scrollTo`、`scrollTop` 赋值之后文档滚动位置仍为 0，内层滚动容器照常滚动（scrollTop 180/120）。该方案与插件名、插件实现和 DSH 版本无关，覆盖任何“向 body 追加行内节点”的模式；代价是如果某个插件确实依赖文档级滚动，内容会被外壳裁掉——这属于 DSH 的 slot/内层滚动模型之外，不作为兼容目标。`ConversationLayoutTests.testPluginsCannotScrollTheAppShell` 用通用场景回归（追加零尺寸 SVG 与普通块、尝试滚轮/程序化滚动、验证内层滚动仍可用）。
+
+### dsh-pet 透明动画的黑底
+
+dsh-pet 的动画素材是 VP9-alpha WebM。WebKit 能解码 VP9 但丢弃 alpha，透明区域渲染为黑底；官方 Electron 桌面端使用 Chromium，原生支持 VP9-alpha，所以同一插件在桌面端没有这个现象。插件已按 `prefersMov()` 在 macOS WebKit 上请求同名 `.mov`（HEVC-with-Alpha），dsh-pet 宿主在该文件缺失时回退 `.webm`。这是素材格式问题，不是页面布局补丁：DshForMac 的注入脚本不针对它做任何处理。
+
+上游 Release `assets-mov` 提供 109 个与 webm 同名的 .mov（`dsh-pet-mov-assets-mov.zip`，约 80 MB）。放入 `~/.dsh/dsh-pet/main-animation/mov/` 后，本机真实 WKWebView 复验：`/dsh-pet-7340/thumb/main/<名称>.mov` 返回 200 `video/quicktime`，视频 `readyState=4`、640×360，透明区域透出页面背景，截图不再出现黑色矩形。这是 dsh-pet 的素材安装，不修改 DSH、插件代码或 DshForMac 的页面注入；DshForMac 也不自动下载第三方素材。素材响应带 `cache-control: max-age=3600`，安装后旧的回退 WebM 可能仍在有效期内被复用，必要时清理 WKWebView 缓存或等待过期。
