@@ -51,4 +51,22 @@ final class TaskReminderTests: XCTestCase {
         XCTAssertTrue(!duplicate)
         XCTAssertTrue(TaskReminder(kind: "test", sessionId: "").title == "DshForMac 测试提醒")
     }
+
+    /// Dynamic system colors must be resolved for the requested appearance.
+    /// Converting `.cgColor` outside a drawing context always resolves Aqua,
+    /// which is what kept the reminder card light in dark mode.
+    @MainActor
+    func testDynamicSystemColorsResolveAgainstRequestedAppearance() throws {
+        _ = NSApplication.shared
+        let light = try XCTUnwrap(NSAppearance(named: .aqua))
+        let dark = try XCTUnwrap(NSAppearance(named: .darkAqua))
+        let lightSurface = try XCTUnwrap(
+            ReminderColorResolution.color(.windowBackgroundColor, for: light).usingColorSpace(.sRGB)
+        )
+        let darkSurface = try XCTUnwrap(
+            ReminderColorResolution.color(.windowBackgroundColor, for: dark).usingColorSpace(.sRGB)
+        )
+        XCTAssertGreaterThan(lightSurface.brightnessComponent, 0.9)
+        XCTAssertLessThan(darkSurface.brightnessComponent, 0.3)
+    }
 }
