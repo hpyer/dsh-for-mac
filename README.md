@@ -10,12 +10,51 @@
 
 - 自动检测 Node.js、npm、npx，以及可选的 pnpm/Corepack；支持手动选择 `node` 可执行文件。
 - Node.js 可用后自动启动 DSH；首次运行会下载 `@deepseek-ai/dsh` 的精确版本并校验完整性。
-- 为每个 DSH 版本建立独立运行时目录；启动健康检查通过后才切换当前版本，默认保留最新五个受管版本，并额外保护当前运行或用户固定的版本。
+- 为每个 DSH 版本建立独立运行时目录；启动健康检查通过后才切换当前版本；按来源标签保留受管版本（`latest` 保留最新 3 个，其他标签各保留最新 2 个），并额外保护当前运行或用户固定的版本。
 - 使用内嵌 WebView 打开本机 DSH 服务，默认地址为 `http://127.0.0.1:3080`；端口可在设置中修改。
 - 提供 DSH 版本选择、更新检查频率、可多选的 DSH 检查标签（latest 固定勾选）、包下载镜像、端口设置、一键重启与菜单栏控制。
 - DshForMac 应用每天检查一次 GitHub 发布版本；发现新版后可稍后提醒、忽略此版本，或直接安装并重启。设置和菜单栏均可手动检查应用更新，失败时可打开 GitHub 发布页面手动安装。
 - 设置中可一键启用或禁用推荐插件：已安装的 DSH Market 会自动识别；启用“拖入文件夹添加工作区”后，Finder 文件夹拖到左侧栏会创建 DSH 工作区，右侧仍按 DSH 原逻辑添加对话附件。
 - 文件浏览与文本、Markdown、图片、PDF 预览使用 DSH 内置界面；为旧版 macOS 保留必要的 WebKit API 与 PDF Worker 兼容补丁。
+
+## 与官方桌面端的区别
+
+官方桌面端是 Electron 应用，随包携带 Node、pnpm、Python 与固定版 DSH，追求开箱即用；DshForMac 是原生薄壳，复用本机 Node、按需下载 DSH，换取更小的体积、更旧的系统兼容和版本自由。两者都不是 DSH 的分叉，都使用 `~/.dsh`，可以共存。
+
+| 对比项 | DshForMac | 官方桌面端 |
+| --- | --- | --- |
+| 技术栈 | Swift + AppKit + WKWebView；只额外依赖 Sparkle；不捆绑 Electron/Chromium/Node | Electron 壳（Chromium）；内置 Node、pnpm、Python 3.12 与 DSH 依赖 |
+| 体积 | 通用 DMG 约 2.5 MB；安装后约 5.6 MB | macOS 按架构分开：Apple 芯片约 256 MB、Intel 约 276 MB（下载页未列出），Windows 约 280 MB；安装后约 1 GB |
+| 系统要求 | macOS 11+；Intel/Apple Silicon 通用；需自备 Node 22.19+/24+ | macOS 13+；Apple 芯片与 Intel 分开打包（Intel 需[直链](https://download.deepseek.com/desktop/dsh-latest-macos-x64.dmg)） |
+| DSH 版本 | 不捆绑；可跟 npm 最新版（含 alpha/next）、多版本共存、固定或回滚；与应用更新互相独立 | 与桌面端绑定同一版本，换 DSH 需更新桌面端（当前 Apple 芯片包 0.2.2-rc.1） |
+| 运行时与更新 | 首次启动从 registry 下载（默认腾讯镜像，可换源）；应用走 Sparkle/GitHub，不强制；DSH 更新由用户决定 | 运行时随包，无需再下载；更新走官方 CDN，分正式版/开发版通道，可下发强制更新 |
+| 系统集成 | 常驻菜单栏（版本、DSH 状态、⌘0/⌘R/⇧⌘R/⇧⌘,）、记住窗口位置、唤醒重连 | macOS 无菜单栏图标；关窗隐藏，用 Dock 或 `dsh://open` 找回；退出前提示运行中的任务 |
+| 插件与数据 | 随包两个可选插件：任务提醒（应用内卡片，免通知授权）与 Finder 拖文件夹建工作区；复用 web profile | 无任务完成提醒；插件装在独立的 desktop profile，由内置 pnpm 管理 |
+| 可控性与分发 | 端口、镜像、检查频率可配；原生壳无账号与埋点；未签名，Sparkle EdDSA 签名，MIT | 端口由系统分配；Electron 与 DSH 整体验证更新；Developer ID 签名并公证；桌面端含产品埋点 |
+
+### 差异化的意义
+
+- **旧系统与通用包。** 官方最低 macOS 13；本应用从 macOS 11 起，一个包覆盖 Intel 与 Apple Silicon。
+- **体积。** 约 5.6 MB 对约 1 GB，旧机器和小硬盘也能长期留着。
+- **DSH 版本自由。** 直接跟随 npm，可同时装多个版本、试 alpha/next、固定或回滚；官方只能跟随桌面端发布。
+- **原生 macOS 体验。** 菜单栏常驻、免通知授权的任务提醒、Finder 拖文件夹建工作区、唤醒重连；官方 macOS 版没有对应实现。
+- **可共存。** 共用 `~/.dsh`，按需切换，不用迁移数据。
+
+### 代价与边界
+
+- 需自备兼容 Node.js；官方不需要。
+- 首次启动要联网下载 DSH；官方随包，装完即可用。
+- 未签名，首次打开需放行 Gatekeeper；官方已签名公证。
+- 不捆绑 Python/Office/语音所需运行时；内嵌 WebKit 与 Chromium 存在行为差异。
+- 仅支持 macOS；自由组合版本可能出现官方不会遇到的兼容问题（已有最低版本门槛、健康检查和会话修复兜底）。
+- 官方的欢迎引导、自定义快捷键、崩溃诊断、`dsh` CLI 注册等壳层功能，本应用不提供。
+
+### 怎么选
+
+- **官方桌面端：** macOS 13+、想开箱即用，或需要 Python/Office 能力与 Windows 版。
+- **DshForMac：** macOS 11/12、已有 Node，或想轻量、追新、锁版本、换镜像。
+
+对比基于 2026-11：本机官方版 0.2.1-rc.4，官方 Apple 芯片包 0.2.2-rc.1；官方迭代较快，以[下载页](https://www.deepseek.com/download/)与[桌面端文档](https://github.com/deepseek-ai/deepseek-harness/blob/master/apps/desktop/README.zh.md)为准。
 
 ## 界面预览
 
