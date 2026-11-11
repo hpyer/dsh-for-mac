@@ -8,6 +8,10 @@ window.__ModuleLoader__.load({
     const hintStyleVersion = 'settings-area-v1'
     const overlayId = 'dsh-workspace-drop2add-overlay'
     const toastId = 'dsh-workspace-drop2add-toast'
+    // WebKit keeps sending dragenter/dragover while the pointer is over this
+    // window. Once they stop, the drag has left the window, been cancelled, or
+    // Finder aborted it, so the drop target must not stay on screen forever.
+    const dropOverlayIdleTimeout = 3_000
     let toastTimer
 
     function workspacePathFrom(dataTransfer) {
@@ -216,6 +220,21 @@ window.__ModuleLoader__.load({
       const nativeBridge = window.webkit?.messageHandlers?.dshWorkspaceDrop2AddBridge
       const bridgeToken = createBridgeToken()
       let layoutRefreshScheduled = false
+      let dropOverlayWatchdog
+      const disarmDropOverlayWatchdog = () => {
+        if (dropOverlayWatchdog === undefined) return
+        window.clearTimeout(dropOverlayWatchdog)
+        dropOverlayWatchdog = undefined
+      }
+      const armDropOverlayWatchdog = () => {
+        disarmDropOverlayWatchdog()
+        dropOverlayWatchdog = window.setTimeout(() => {
+          dropOverlayWatchdog = undefined
+          // Only the workspace drop target is ours to clear; DSH's attachment
+          // overlay was already reset when the drag first reached the sidebar.
+          nativeDropProtection.leaveSidebar()
+        }, dropOverlayIdleTimeout)
+      }
       const nativeDropProtection = {
         enabled: Boolean(nativeBridge),
         sidebarWidth: 0,
@@ -233,12 +252,15 @@ window.__ModuleLoader__.load({
           }
           setHintVisible(false)
           showSidebarDropOverlay(nativeDropProtection.sidebarWidth)
+          armDropOverlayWatchdog()
         },
         leaveSidebar() {
-          if (!nativeDropProtection.isOverSidebar) return
+          disarmDropOverlayWatchdog()
           nativeDropProtection.isOverSidebar = false
+          // Always clean up, even when the flag was already cleared: the
+          // overlay is the user-visible state and must never outlive a drag.
           hideSidebarDropOverlay()
-          setHintVisible(true)
+          setHintVisible(nativeDropProtection.sidebarWidth > 0)
         },
         onDragEvent: (type) => {
           if (type === 'dragenter' || type === 'dragover') {
@@ -353,10 +375,23 @@ window.__ModuleLoader__.load({
         }
       }
       const finishDrag = () => nativeDropProtection.leaveSidebar()
+      // Drags that originate in Finder never produce a DOM dragend here, and a
+      // drag that leaves the window or is cancelled can end without a drop.
+      // Clear the drop target when the page stops being the active surface.
+      const abandonDropTarget = () => nativeDropProtection.leaveSidebar()
+      const abandonDropTargetOnEscape = (event) => {
+        if (event.key === 'Escape') abandonDropTarget()
+      }
+      const abandonDropTargetWhenHidden = () => {
+        if (document.visibilityState !== 'visible') abandonDropTarget()
+      }
       window.addEventListener('dragenter', trackDragLocation, true)
       window.addEventListener('dragover', trackDragLocation, true)
       window.addEventListener('drop', finishDrag, true)
       window.addEventListener('dragend', finishDrag, true)
+      window.addEventListener('blur', abandonDropTarget)
+      window.addEventListener('keydown', abandonDropTargetOnEscape, true)
+      document.addEventListener('visibilitychange', abandonDropTargetWhenHidden)
       window.addEventListener('resize', scheduleSidebarLayoutRefresh)
       const sidebarObserver = new MutationObserver(scheduleSidebarLayoutRefresh)
       sidebarObserver.observe(document.body, {
@@ -366,6 +401,7 @@ window.__ModuleLoader__.load({
       })
 
       return () => {
+        disarmDropOverlayWatchdog()
         document.removeEventListener('dragenter', entered, true)
         document.removeEventListener('dragleave', left, true)
         document.removeEventListener('dragover', over, true)
@@ -374,6 +410,9 @@ window.__ModuleLoader__.load({
         window.removeEventListener('dragover', trackDragLocation, true)
         window.removeEventListener('drop', finishDrag, true)
         window.removeEventListener('dragend', finishDrag, true)
+        window.removeEventListener('blur', abandonDropTarget)
+        window.removeEventListener('keydown', abandonDropTargetOnEscape, true)
+        document.removeEventListener('visibilitychange', abandonDropTargetWhenHidden)
         window.removeEventListener('resize', scheduleSidebarLayoutRefresh)
         sidebarObserver.disconnect()
         clearTimeout(toastTimer)

@@ -19,6 +19,7 @@
 - 文档字节读取回归：真实 WKWebView 强制触发 PDF Worker 兼容，检查原生 File、Blob.slice、Response.blob 与继承语义；multipart 响应覆盖 Word/PPT 单字节前置检查、Excel、PDF、图片、HTML、CSV/TSV 及空附件，验证 DSH 的 Blob 类型校验和字节保真。2026-10-16 完整 `swift test` 通过 58 项；这些是读取层测试，不等同于所有格式的完整渲染或旧系统实测，仍需实际文档复验。
 - API 回归测试还覆盖数组不变性和空槽、循环克隆和共享缓冲区视图、大字体 Base64、真实 WebView 的 buffer 转移与失败保留、ReadableStream 完成/错误/取消后的锁释放、Response 消费语义及真实 Worker 字体转移。审计 DSH `0.2.0-rc.2` 和 `0.2.1-alpha.2`；旧系统人工验收补充模型排序、定时任务、轨迹及设置保存，不将缺失 API 模拟等同于完整旧系统实测，详见 [WebKit 兼容审计](webkit-compatibility.md)。
 - DSH Market 发起重启时由原生运行时管理器重启受管进程。WebKit 回归测试验证仅拦截同源 POST 重启，GET、不同端口以及新旧文件打开 RPC 原样交给 DSH，后安装的 transport 不重复发送重启消息。
+- 工作区拖放：把单个 Finder 文件夹拖到左侧栏并松开会创建并显示工作区；拖到右侧仍按 DSH 附件处理。拖入左栏后未在左栏松开（拖出窗口、按 Esc、Finder 中止或拖动超时）时，必须恢复“拖放文件夹以添加工作区”提示、不残留“松开鼠标以添加工作区”覆盖层，下一次拖放仍可正常提示；插件脚本测试覆盖 3 秒看门狗、失焦、Esc、拖出左栏、侧栏内部 dragleave 不闪烁和原生会话结束清理，修复时另用真实 WKWebView 探针确认覆盖层显示/隐藏，真机 Finder 拖动仍须人工复验。
 
 ## 内嵌终端环境
 

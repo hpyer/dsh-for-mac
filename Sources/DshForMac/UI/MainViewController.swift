@@ -96,6 +96,9 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
         webView.onWorkspaceDirectoryDropped = { [weak self] url in
             self?.deliverWorkspaceDirectory(url)
         }
+        webView.onWorkspaceDragSessionEnded = { [weak self] in
+            self?.finishWorkspaceDrop2AddDragSession()
+        }
         return webView
     }()
     private lazy var runtimeManager = DSHRuntimeManager(
@@ -1203,6 +1206,16 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
                 NSLog("Unable to deliver Finder folder to DSH plugin: \(error.localizedDescription)")
             }
         }
+    }
+
+    /// Ends the page-side drop target after a drag session that will never
+    /// produce a DOM drop or dragend: the pointer left the WebView, the user
+    /// cancelled with Escape, or Finder aborted the drag. The plugin also has
+    /// its own idle watchdog; this path reacts as soon as AppKit reports the
+    /// end of the session.
+    private func finishWorkspaceDrop2AddDragSession() {
+        guard workspaceDrop2AddBridgeToken != nil else { return }
+        webView.evaluateJavaScript("window.__dshForMacWorkspaceDrop2AddProtection?.leaveSidebar?.();")
     }
 
     private func openExternalURL(_ url: URL) {

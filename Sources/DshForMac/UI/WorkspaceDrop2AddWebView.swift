@@ -7,6 +7,9 @@ final class WorkspaceDrop2AddWebView: WKWebView {
     var isWorkspaceDrop2AddBridgeReady = false
     var sidebarDrop2AddWidth: CGFloat = 0
     var onWorkspaceDirectoryDropped: ((URL) -> Void)?
+    /// Called when a drag session that was over the WebView ends without the
+    /// page receiving a matching DOM drop or dragend.
+    var onWorkspaceDragSessionEnded: (() -> Void)?
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
         let webOperation = super.draggingEntered(sender)
@@ -19,6 +22,24 @@ final class WorkspaceDrop2AddWebView: WKWebView {
     override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
         let webOperation = super.draggingUpdated(sender)
         return webOperation == [] && acceptsWorkspaceDirectory(from: sender) ? .copy : webOperation
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        super.draggingExited(sender)
+        // The drag left the WebView (titlebar, another window, or off-screen) and
+        // may end there; WebKit will not deliver the sidebar's dragleave/drop.
+        onWorkspaceDragSessionEnded?()
+    }
+
+    override func draggingEnded(_ sender: NSDraggingInfo) {
+        // `draggingEnded:` is an optional NSDraggingDestination method that
+        // neither NSView nor WKWebView implements, so there is no super
+        // implementation to call: responding here is what makes AppKit deliver
+        // the optional message in the first place.
+        // Covers cancelled drags (Escape), drops outside the WebView, and a
+        // Finder drag the user abandoned; the page-side drop target must not
+        // outlive the drag session.
+        onWorkspaceDragSessionEnded?()
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {

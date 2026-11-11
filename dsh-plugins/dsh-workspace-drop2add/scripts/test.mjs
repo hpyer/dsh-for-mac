@@ -18,6 +18,12 @@ for (const requiredSnippet of [
   "showSidebarDropOverlay(nativeDropProtection.sidebarWidth)",
   "window.dispatchEvent(new Event('dragend'))",
   "setHintVisible(true)",
+  'dropOverlayIdleTimeout',
+  'armDropOverlayWatchdog()',
+  'disarmDropOverlayWatchdog()',
+  "window.addEventListener('blur', abandonDropTarget)",
+  "window.addEventListener('keydown', abandonDropTargetOnEscape, true)",
+  "document.addEventListener('visibilitychange', abandonDropTargetWhenHidden)",
   "Tips: 拖放文件夹以添加工作区",
   "document.querySelector('div.hHd-Xa_settingsArea')",
   'settingsArea.prepend(node)',
@@ -32,3 +38,7 @@ for (const requiredSnippet of [
 }
 
 console.log('workspace-drop2add client contract is valid')
+
+// Exercises the drag-session fallbacks in a fake DOM (see the file for what it
+// covers). Imported last so the cheap contract check reports first.
+await import('./drag-overlay.test.mjs')
