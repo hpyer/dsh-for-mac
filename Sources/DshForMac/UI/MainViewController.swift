@@ -126,6 +126,11 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     private var webRecoveryIdentifier: UUID?
     private var webRecoveryNeeded = false
     private var failedWebLoads = 0
+    /// Hidden windows opened by DSH's sign-in flow. They stay unattached to any
+    /// screen: only the page's later `location.replace()` matters, which the
+    /// navigation delegate turns into a system-browser open.
+    private var popupWebViews: [ObjectIdentifier: WKWebView] = [:]
+    private var popupWebViewsOpenedInBrowser: Set<ObjectIdentifier> = []
     var isUpdateOperationInProgress: Bool { isCheckingForUpdates || isDownloadingUpdate || isRepairingSession }
     var canDownloadUpdate: Bool {
         guard !isUpdateOperationInProgress, !isLaunchingDeepSeekHarness,
@@ -377,6 +382,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
         webAddress = nil
         runtimeManager.stop()
         hideWebOperationStatus()
+        releaseAllPopupWebViews()
         activeDSHVersion = nil
         reportServiceStatus("DSH 已停止", isRunning: false)
     }
@@ -583,6 +589,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
         hideWebOperationStatus()
         resetWorkspaceDrop2AddBridge()
         taskNotificationBridgeToken = nil
+        releaseAllPopupWebViews()
         webView.stopLoading()
         webView.isHidden = true
         environmentStack.isHidden = false
@@ -906,9 +913,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     }
 
     private func isLocalDSHURL(_ url: URL) -> Bool {
-        url.scheme == "http"
-            && url.host == "127.0.0.1"
-            && url.port == AppSettings.shared.port
+        WebViewNavigationPolicy.isLocalDSHURL(url, port: AppSettings.shared.port)
     }
 
     /// Installs in the page's JavaScript world after the plugin handshake. It
@@ -1201,6 +1206,9 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     }
 
     private func openExternalURL(_ url: URL) {
+        // Blank placeholders are popup handshakes rather than destinations;
+        // WebKit's about: scheme is in-app document state, not a link.
+        guard !WebViewNavigationPolicy.isBlankPopup(url) else { return }
         let alert = NSAlert()
         if url.isFileURL {
             alert.messageText = "使用默认应用打开文件？"
@@ -1226,21 +1234,111 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
             return
         }
 
-        guard !isLocalDSHURL(url) else {
-            decisionHandler(.allow)
+        guard webView !== self.webView else {
+            switch WebViewNavigationPolicy.destination(for: url, port: AppSettings.shared.port) {
+            case .localDSH:
+                decisionHandler(.allow)
+            case .blankPopup:
+                // The shell owns the main document; a page must not replace it
+                // with an empty document.
+                decisionHandler(.cancel)
+            case .external:
+                openExternalURL(url)
+                decisionHandler(.cancel)
+            }
             return
         }
 
-        openExternalURL(url)
-        decisionHandler(.cancel)
+        // Hidden popup windows only exist for DSH's sign-in handshake. Their
+        // first HTTP(S) navigation is the platform authorize page from the
+        // user's explicit sign-in click, so it goes straight to the default
+        // browser; other popup navigations keep the usual confirmation.
+        switch WebViewNavigationPolicy.destination(for: url, port: AppSettings.shared.port) {
+        case .blankPopup:
+            decisionHandler(.allow)
+        case .localDSH:
+            decisionHandler(.cancel)
+            self.webView.load(navigationAction.request)
+        case .external:
+            decisionHandler(.cancel)
+            openExternalURLFromPopup(url, popup: webView)
+        }
+    }
+
+    /// DSH preopens `about:blank` so a user gesture keeps the sign-in tab
+    /// available, then navigates it once the local server returns the authorize
+    /// URL. The hidden popup is not a page the user asked to visit, so the
+    /// first HTTP(S) destination is the sign-in page and opens without a
+    /// second prompt. Everything else still goes through `openExternalURL`.
+    private func openExternalURLFromPopup(_ url: URL, popup: WKWebView) {
+        let identifier = ObjectIdentifier(popup)
+        guard popupWebViews[identifier] != nil,
+              !popupWebViewsOpenedInBrowser.contains(identifier),
+              WebViewNavigationPolicy.canOpenDirectlyInBrowser(url)
+        else {
+            openExternalURL(url)
+            return
+        }
+        popupWebViewsOpenedInBrowser.insert(identifier)
+        guard NSWorkspace.shared.open(url) else {
+            NSLog("Unable to open the DSH sign-in URL in the default browser: %@", url.absoluteString)
+            popupWebViewsOpenedInBrowser.remove(identifier)
+            openExternalURL(url)
+            return
+        }
+        // The system browser owns the sign-in page now. DSH closes a navigated
+        // sign-in window only when the attempt fails, not after success, so the
+        // hidden placeholder would otherwise stay for the rest of the session.
+        // Closing it here also releases it through `webViewDidClose`.
+        popup.evaluateJavaScript("window.close()") { [weak self, weak popup] _, _ in
+            guard let self, let popup,
+                  self.popupWebViews[ObjectIdentifier(popup)] != nil else { return }
+            self.releasePopupWebView(popup)
+        }
+    }
+
+    private func makePopupWebView(configuration: WKWebViewConfiguration) -> WKWebView? {
+        guard WebViewNavigationPolicy.canCreatePopup(existingCount: popupWebViews.count) else {
+            NSLog("Refused an extra DSH popup window: concurrent popup limit reached")
+            return nil
+        }
+        let popup = WKWebView(frame: .zero, configuration: configuration)
+        popup.navigationDelegate = self
+        popup.uiDelegate = self
+        popupWebViews[ObjectIdentifier(popup)] = popup
+        return popup
+    }
+
+    private func releasePopupWebView(_ webView: WKWebView) {
+        let identifier = ObjectIdentifier(webView)
+        popupWebViews.removeValue(forKey: identifier)
+        popupWebViewsOpenedInBrowser.remove(identifier)
+    }
+
+    /// Closes every hidden popup when the embedded DSH interface is torn down,
+    /// so a stopped or replaced runtime cannot keep sign-in windows alive.
+    private func releaseAllPopupWebViews() {
+        let popups = Array(popupWebViews.values)
+        popupWebViews.removeAll()
+        popupWebViewsOpenedInBrowser.removeAll()
+        for popup in popups {
+            popup.stopLoading()
+            popup.navigationDelegate = nil
+            popup.uiDelegate = nil
+        }
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation?) {
+        guard webView === self.webView else { return }
+        // A new main document orphans any hidden sign-in window: its JavaScript
+        // context is replaced, so it can never navigate or close itself again.
+        releaseAllPopupWebViews()
         resetWorkspaceDrop2AddBridge()
         taskNotificationBridgeToken = nil
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation?) {
+        guard webView === self.webView else { return }
         hideWebOperationStatus()
         if webRecoveryNeeded, let activeDSHVersion {
             webRecoveryNeeded = false
@@ -1250,15 +1348,27 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        guard webView === self.webView else { return }
         handleWebNavigationFailure(error)
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        guard webView === self.webView else { return }
         handleWebNavigationFailure(error)
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        guard webView === self.webView else {
+            // A crashed sign-in popup can no longer deliver its authorize URL;
+            // drop it instead of keeping a dead hidden window until the cap.
+            releasePopupWebView(webView)
+            return
+        }
         handleWebNavigationFailure(nil)
+    }
+
+    func webViewDidClose(_ webView: WKWebView) {
+        releasePopupWebView(webView)
     }
 
     private func handleWebNavigationFailure(_ error: Error?) {
@@ -1281,8 +1391,18 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
         for navigationAction: WKNavigationAction,
         windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
-        guard let url = navigationAction.request.url else { return nil }
+        let requestedURL = navigationAction.request.url
 
+        // DSH's sign-in click preopens an empty window and fills it in later.
+        // Keep it as a hidden WebView so the page's `location.replace()` reaches
+        // the navigation delegate, where the real authorize URL opens in the
+        // system browser. Opening or prompting for about:blank would break the
+        // login flow.
+        if WebViewNavigationPolicy.isBlankPopup(requestedURL) {
+            return makePopupWebView(configuration: configuration)
+        }
+
+        guard let url = requestedURL else { return nil }
         if isLocalDSHURL(url) {
             webView.load(navigationAction.request)
         } else {

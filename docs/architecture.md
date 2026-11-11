@@ -24,7 +24,7 @@ DshForMac AppKit 应用
   └─ http://127.0.0.1:<port> → WKWebView
 ```
 
-文件与产出物预览由 DSH 内置界面处理。DSH 0.2.0-rc.2 和 0.2.1-alpha.1 的文档预览包包含按需加载的 `client.pdf.js`（PDF.js 渲染器）；[上游文档](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/client/ui-sidebar-documentpreview/README.md)也明确支持 PDF 预览。主 WebView 填满原生内容区域，不再提供独立预览栏，也不拦截文件按钮、`session/openWorkspacePath` 或 `host/openPath` 请求。本机导航交给 WebView；外部链接与 `file:` 导航仍经用户确认后交给系统默认应用。
+文件与产出物预览由 DSH 内置界面处理。DSH 0.2.0-rc.2 和 0.2.1-alpha.1 的文档预览包包含按需加载的 `client.pdf.js`（PDF.js 渲染器）；[上游文档](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/client/ui-sidebar-documentpreview/README.md)也明确支持 PDF 预览。主 WebView 填满原生内容区域，不再提供独立预览栏，也不拦截文件按钮、`session/openWorkspacePath` 或 `host/openPath` 请求。本机导航交给 WebView；外部链接与 `file:` 导航仍经用户确认后交给系统默认应用。DSH 登录会先用 `window.open("about:blank")` 预开窗口，等本机服务返回授权地址后再导航该窗口；应用为这类空白窗口保留隐藏 WebView，并把其首次 HTTP(S) 导航直接交给系统浏览器，因此点击“登录”不会再停留在 `about:blank`。
 
 菜单栏依次显示应用版本与 DSH 运行状态、带快捷键的主窗口／页面重载／重启／设置操作、两种更新检查，以及单独的退出项。应用设置使用 ⇧⌘,，主菜单与状态菜单保持一致；⌘, 留给内嵌 DSH 页面。状态文字使用辅助文字颜色。关闭主窗口不会结束受管服务，Dock 重新打开或选择“显示主窗口”（⌘0）会将已有窗口置前。
 
@@ -106,7 +106,7 @@ DSH 0.1.6 的 xterm DOM 渲染器只指定普通等宽字体。WebView 在文档
 
 ## WebView 安全
 
-- 内嵌 WebView 只允许加载配置端口的 `http://127.0.0.1` DSH 服务；其他链接或文件需要用户确认后才交给浏览器或默认应用。
+- 内嵌 WebView 只允许加载配置端口的 `http://127.0.0.1` DSH 服务；其他链接或文件需要用户确认后才交给浏览器或默认应用。唯一例外是 DSH 登录预开的 `about:blank` 空白窗口：它不加载页面也不提示，隐藏 WebView 只用于承接其后的授权地址，该地址的首次 HTTP(S) 导航直接交给系统浏览器，随后主动关闭该隐藏窗口；最多同时存在 4 个，页面调用 `window.close()` 或切换、停止运行版本时也会释放。
 - 兼容旧版 macOS 是核心要求，最低部署目标保持 macOS 11。原生文件预览已移除，但 DSH 内置功能依赖的 WebKit 兼容层继续保留。在加载本机 DSH 页面前，补齐 macOS 13 等旧版 WebKit 缺失的 `Promise.withResolvers`、`Promise.try`、`URL.parse`、`RegExp.escape`、`Math.sumPrecise`、`Map.getOrInsert*`、`Set.intersection`、`Uint8Array.fromBase64`、`Iterator` 和 `AbortSignal.any/timeout`，已有原生 API 不覆盖。仅在需要兼容时，向可识别的 DSH PDF.js Worker Blob 前置同一套兼容实现；普通 Blob 不注入，不修改受管 DSH 包。
 - DSH `0.2.0-rc.2` 与 `0.2.1-alpha.2` 发布代码审计后，兼容层还补齐 `Object.hasOwn`、数组末尾访问/搜索/复制排序、`Symbol.dispose`、`structuredClone`、`ArrayBuffer.transferToFixedLength`、`Uint8Array.toBase64`、`Response.bytes`、ReadableStream 异步迭代与 `AbortSignal.throwIfAborted`。页面与 PDF Worker 共用自包含安装器。缓冲区转移通过原生 MessageChannel 脱离源数据；克隆不丢失循环和共享视图，不支持的宿主对象明确拒绝。用途、验证和限制见 [WebKit 兼容审计](webkit-compatibility.md)。
 - PDF Worker 的 Blob 构造拦截使用 Proxy，并通过 Reflect.construct 保留原生 prototype 与 newTarget。File、slice、Response.blob/formData 产生的原生对象仍须通过 `instanceof Blob`；否则 DSH 的 multipart 二进制响应校验会拒绝文档字节，连带影响 Office 预览前置检查及其他字节型预览。
