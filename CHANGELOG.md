@@ -2,6 +2,14 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 的记录方式。
 
+## [0.4.10] - 2026-11-21
+
+- 最低兼容 DSH 版本：`0.1.6`。
+
+### 修复
+
+- 修复 DSH 0.2.2-rc.5 在 macOS 13–15 上所有浮动菜单和弹窗都贴在视口左上角或左下角的问题：新增 WebKit 锚点定位兼容层，保留 React 内联写入的 `anchor-name` / `position-anchor`，解析样式表中的 `anchor()`、`anchor-size()` 与 `@position-try`，为 `position: fixed` 浮动层计算位置及翻转回退；浏览器原生支持锚点定位时不生效。
+
 ## [0.4.9] - 2026-11-11
 
 - 最低兼容 DSH 版本：`0.1.6`。
