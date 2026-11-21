@@ -55,6 +55,7 @@ final class MainViewController: NSViewController, WKNavigationDelegate, WKUIDele
                 forMainFrameOnly: true
             )
         )
+        WebKitAnchorPositioning.configure(contentController)
         contentController.addUserScript(
             WKUserScript(
                 source: WebKitCompatibility.modelSelectionMouseScript,

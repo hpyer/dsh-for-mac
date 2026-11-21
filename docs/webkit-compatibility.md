@@ -80,3 +80,19 @@ html, body {
 dsh-pet 的动画素材是 VP9-alpha WebM。WebKit 能解码 VP9 但丢弃 alpha，透明区域渲染为黑底；官方 Electron 桌面端使用 Chromium，原生支持 VP9-alpha，所以同一插件在桌面端没有这个现象。插件已按 `prefersMov()` 在 macOS WebKit 上请求同名 `.mov`（HEVC-with-Alpha），dsh-pet 宿主在该文件缺失时回退 `.webm`。这是素材格式问题，不是页面布局补丁：DshForMac 的注入脚本不针对它做任何处理。
 
 上游 Release `assets-mov` 提供 109 个与 webm 同名的 .mov（`dsh-pet-mov-assets-mov.zip`，约 80 MB）。放入 `~/.dsh/dsh-pet/main-animation/mov/` 后，本机真实 WKWebView 复验：`/dsh-pet-7340/thumb/main/<名称>.mov` 返回 200 `video/quicktime`，视频 `readyState=4`、640×360，透明区域透出页面背景，截图不再出现黑色矩形。这是 dsh-pet 的素材安装，不修改 DSH、插件代码或 DshForMac 的页面注入；DshForMac 也不自动下载第三方素材。素材响应带 `cache-control: max-age=3600`，安装后旧的回退 WebM 可能仍在有效期内被复用，必要时清理 WKWebView 缓存或等待过期。
+
+### DSH 0.2.2-rc.5 浮动菜单的 CSS 锚点定位
+
+2026-11-21 在 macOS 13.7.8（WebKit 16.6）复现：升级到 DSH 0.2.2-rc.5 后，模型选择、工作区选择、账号菜单、视图选项等所有浮动层都贴在视口左上角或左下角；同一页面在 macOS 26 正常，0.2.2-rc.1 也正常。检查发布 CSS 后确认，rc.5 的菜单与弹窗统一改用 CSS anchor positioning：`anchor-name`、`position-anchor`、`anchor()`、`anchor-size()`、`position-area: none` 以及 `@position-try`。WebKit 从 Safari 26 才开始实现这些特性；旧版 WebKit 丢弃含 `anchor()` 的 inset 声明，浮动层于是退回 `position: fixed` 的静态位置。共享菜单还把 `position-anchor` 和 `anchor-name` 通过 React 内联 style 写入，旧 WebKit 在写入 `CSSStyleDeclaration` 时就丢弃这些未知属性，页面代码之后也无法再读回。
+
+兼容层新增 `Sources/DshForMac/Resources/anchor-positioning.js`，在文档开始注入，仅在 `CSS.supports('anchor-name: --x')` 为假时启用：
+
+- 拦截 `CSSStyleDeclaration` 上锚点属性的读写，保留 React 内联的 `position-anchor` / `anchor-name`；
+- 解析页面样式表的原始文本（`<style>` 与同源 `<link>`；CSSOM 已丢弃这些声明），按文档顺序合并匹配规则；
+- 将 `anchor()` / `anchor-size()` 解析为像素，按 inset-modified containing block 与 `align-self` / `justify-self` 计算最终 `top` / `left`；
+- 按 `position-try-fallbacks` 顺序尝试 `@position-try` 规则，取首个不溢出视口的方案；
+- 在 DOM、样式、滚动和尺寸变化时重新计算；浏览器原生支持锚点定位时不安装任何补丁。
+
+真实 WKWebView（macOS 13.7.8）复验 DSH 0.2.2-rc.5：账号菜单从视口角落修正到触发器上方并右对齐，工作区选择修正到触发器下方，模型选择右对齐触发器并保持 8px 间距；视图选项、更多菜单同样正确。合成页面覆盖上下/左右翻转、窗口兜底、`anchor-size()` 背景层和子菜单左右翻转。自动测试验证原生支持时跳过、内联属性保留、声明与 `@position-try` 解析、自定义属性回退、对齐以及 `safe` 溢出处理。
+
+边界：rc.5 的锚点规则只使用 `position-area: none`，本兼容层没有实现 `position-area` 的网格区域语义；只处理 DSH 使用的 `position: fixed` 浮动层，不改动绝对定位元素（其包含块是祖先元素）。不处理影子 DOM、构造样式表（`adoptedStyleSheets`）或需要百分比 anchor 侧边的规则，`@supports` 条件只做基础求值。样式表必须同源可读取（本机 DSH 服务满足）。macOS 11/12 未实机复验，原生 macOS 26 路径未改动。
