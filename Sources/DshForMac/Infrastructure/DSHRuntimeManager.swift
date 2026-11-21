@@ -530,7 +530,7 @@ final class DSHRuntimeManager {
         guard DSHCompatibility.supports(version) else {
             throw DSHSessionRepairError(code: "unsupportedVersion")
         }
-        guard let script = Bundle.module.url(forResource: "session-repair", withExtension: "mjs") else {
+        guard let script = AppResourceBundle.url(forResource: "session-repair", withExtension: "mjs") else {
             throw DSHSessionRepairError(code: "operationFailed")
         }
         let root = try applicationSupportDirectory()

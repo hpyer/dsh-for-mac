@@ -12,12 +12,10 @@ import WebKit
 /// (including the native macOS 26 path) and when a page contains no anchor
 /// positioned CSS, so it is safe to install for every DSH version.
 enum WebKitAnchorPositioning {
-    static let script: String = {
-        guard let url = Bundle.module.url(forResource: "anchor-positioning", withExtension: "js"),
-              let script = try? String(contentsOf: url, encoding: .utf8)
-        else { return "" }
-        return script
-    }()
+    static let script: String = AppResourceBundle.string(
+        forResource: "anchor-positioning",
+        withExtension: "js"
+    ) ?? ""
 
     static func configure(_ controller: WKUserContentController) {
         guard !script.isEmpty else { return }
