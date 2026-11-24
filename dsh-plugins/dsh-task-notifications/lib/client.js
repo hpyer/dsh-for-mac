@@ -15,20 +15,42 @@ window.__ModuleLoader__.load({
       return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
     }
 
+    // DSH >= 0.2.3-alpha.1 moved the unified status out of the uiSession
+    // service into its own `uiSession.sessionStatus` service. Cordis resolves
+    // that dotted name on access and throws `cannot get property
+    // "uiSession.sessionStatus" without inject` when the plugin did not inject
+    // it, so read it through ctx.get instead: that needs no injection and
+    // returns undefined on releases without the service. Older releases keep
+    // the status as a plain uiSession property, and the oldest expose only
+    // pendingInteractions.
+    function statusSource(ctx) {
+      const service = typeof ctx.get === 'function' ? ctx.get('uiSession.sessionStatus') : undefined
+      if (service && typeof service.getSnapshot === 'function') return service
+      try {
+        const legacy = ctx.uiSession?.sessionStatus
+        return legacy && typeof legacy.getSnapshot === 'function' ? legacy : undefined
+      } catch {
+        // The service is declared but currently inactive, so the property is
+        // not readable either; the caller falls back to pendingInteractions.
+        return undefined
+      }
+    }
+
     function snapshot(ctx) {
       const rows = ctx.sessions.list.getSnapshot().byId
       const status = new Map()
-      // DSH >= 0.1.6-alpha.2: unified status replaces pendingInteractions.
-      if (ctx.uiSession.sessionStatus) {
-        for (const [sessionId, value] of ctx.uiSession.sessionStatus.getSnapshot()) {
+      const unified = statusSource(ctx)
+      if (unified) {
+        for (const [sessionId, value] of unified.getSnapshot()) {
           status.set(sessionId, {
             running: value.running,
             pending: value.pendingInteraction,
             completed: value.completionUnread
           })
         }
-      } else {
-        // DSH >= 0.1.5-rc.3 and < 0.1.6-alpha.2.
+      } else if (ctx.uiSession?.pendingInteractions) {
+        // DSH >= 0.1.5-rc.3 and < 0.1.6-alpha.2, and any release that exposes
+        // only the pending-interaction map.
         for (const [sessionId, value] of ctx.uiSession.pendingInteractions.getSnapshot()) {
           status.set(sessionId, { pending: value })
         }
@@ -99,9 +121,10 @@ window.__ModuleLoader__.load({
         previous = next
       }
       const disposers = [ctx.sessions.list.subscribe(changed)]
-      if (ctx.uiSession.sessionStatus) {
-        disposers.push(ctx.uiSession.sessionStatus.subscribe(changed))
-      } else {
+      const status = statusSource(ctx)
+      if (status) {
+        disposers.push(status.subscribe(changed))
+      } else if (ctx.uiSession?.pendingInteractions) {
         disposers.push(ctx.uiSession.pendingInteractions.subscribe(changed))
       }
       const open = (sessionId) => {
