@@ -2,6 +2,14 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 的记录方式。
 
+## [0.4.12] - 2026-11-24
+
+- 最低兼容 DSH 版本：`0.1.6`。
+
+### 修复
+
+- 修复 DSH 0.2.3-alpha.1 起插件页显示 `dsh-task-notifications: Error: cannot get property "uiSession.sessionStatus" without inject`、任务结束与待处理提醒全部失效的问题：该版本把会话统一状态从 `uiSession` 服务拆成独立服务 `uiSession.sessionStatus`，cordis 在读取这个点号服务名时要求插件注入，而插件在启动时直接读取该属性并抛错，导致插件未向原生侧发出就绪信号。现在改用无需注入的 `ctx.get()` 读取该服务，并在旧版本上依次回退到 `uiSession.sessionStatus` 属性（0.1.6-alpha.2 ～ 0.2.2）和 `pendingInteractions`（0.1.5-rc.3），兼容各受管 DSH 版本。
+
 ## [0.4.11] - 2026-11-21
 
 - 最低兼容 DSH 版本：`0.1.6`。
