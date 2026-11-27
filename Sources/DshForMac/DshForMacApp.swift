@@ -468,6 +468,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
         refreshAppUpdateSettings()
     }
 
+    private func retryAppUpdateCheck() {
+        appUpdateController.checkForUpdates(retryWhenAvailable: true)
+        refreshAppUpdateSettings()
+    }
+
     private func showAppUpdateFailure(reason: String, canRetry: Bool) {
         let alert = NSAlert()
         alert.messageText = "DshForMac 更新失败"
@@ -477,10 +482,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDeleg
         alert.addButton(withTitle: "关闭")
         let response = alert.runModal()
         if canRetry && response == .alertFirstButtonReturn {
-            DispatchQueue.main.async { [weak self] in self?.checkForAppUpdates() }
+            DispatchQueue.main.async { [weak self] in self?.retryAppUpdateCheck() }
         } else if response == (canRetry ? .alertSecondButtonReturn : .alertFirstButtonReturn) {
             NSWorkspace.shared.open(AppUpdateController.releasesURL)
         }
+        refreshAppUpdateSettings()
     }
 
     @objc private func showSettings() {

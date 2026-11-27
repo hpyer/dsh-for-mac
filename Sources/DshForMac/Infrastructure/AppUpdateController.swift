@@ -13,9 +13,27 @@ final class AppUpdateController: NSObject, SPUUpdaterDelegate {
     private var unavailableReason: String?
     private var userInitiatedCheck = false
     private var foundUpdate = false
+    private var canCheckObservation: NSKeyValueObservation?
+    private var canCheckForUpdatesProvider: (() -> Bool)?
+    private var pendingRetryWhenAvailable = false
 
     var canCheckForUpdates: Bool {
-        updaterController?.updater.canCheckForUpdates ?? true
+        canCheckForUpdatesProvider?() ?? updaterController?.updater.canCheckForUpdates ?? true
+    }
+
+    func observeAvailability<Object: NSObject>(
+        on object: Object,
+        keyPath: KeyPath<Object, Bool>
+    ) {
+        canCheckForUpdatesProvider = { [weak object] in
+            object?[keyPath: keyPath] ?? true
+        }
+        canCheckObservation?.invalidate()
+        canCheckObservation = object.observe(keyPath, options: [.initial, .new]) { [weak self] _, _ in
+            Task { @MainActor [weak self] in
+                self?.handleAvailabilityChanged()
+            }
+        }
     }
 
     func start() {
@@ -37,20 +55,36 @@ final class AppUpdateController: NSObject, SPUUpdaterDelegate {
             userDriverDelegate: nil
         )
         updaterController = controller
+        observeAvailability(on: controller.updater, keyPath: \.canCheckForUpdates)
         controller.startUpdater()
     }
 
-    func checkForUpdates() {
+    func checkForUpdates(retryWhenAvailable: Bool = false) {
         guard let updaterController else {
+            pendingRetryWhenAvailable = false
             onFailure?(unavailableReason ?? "请从发布页面安装 DshForMac.app 后检查更新。", false)
             return
         }
-        guard updaterController.updater.canCheckForUpdates else { return }
+        guard canCheckForUpdates else {
+            if retryWhenAvailable {
+                pendingRetryWhenAvailable = true
+            }
+            return
+        }
+        pendingRetryWhenAvailable = false
         userInitiatedCheck = true
         foundUpdate = false
         onStatusChanged?("正在检查 DshForMac 更新…")
         updaterController.checkForUpdates(nil)
         onAvailabilityChanged?()
+    }
+
+    private func handleAvailabilityChanged() {
+        onAvailabilityChanged?()
+        if pendingRetryWhenAvailable && canCheckForUpdates {
+            pendingRetryWhenAvailable = false
+            checkForUpdates()
+        }
     }
 
     func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
@@ -78,7 +112,8 @@ final class AppUpdateController: NSObject, SPUUpdaterDelegate {
     }
 
     func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: Error?) {
-        DispatchQueue.main.async { [weak self] in self?.onAvailabilityChanged?() }
+        DispatchQueue.main.async { [weak self] in self?.handleAvailabilityChanged() }
+        let shouldNotifyFailure = userInitiatedCheck || foundUpdate
         defer {
             userInitiatedCheck = false
             foundUpdate = false
@@ -91,9 +126,12 @@ final class AppUpdateController: NSObject, SPUUpdaterDelegate {
         }
         let reason = nsError.localizedDescription
         onStatusChanged?("DshForMac 更新失败：\(reason)")
-        if userInitiatedCheck || foundUpdate {
+        if shouldNotifyFailure {
             let verificationFailed = nsError.domain == SUSparkleErrorDomain && [3001, 3002].contains(nsError.code)
-            onFailure?(reason, !verificationFailed)
+            // Defer modal alert so Sparkle finishes scheduling and restoring canCheckForUpdates.
+            DispatchQueue.main.async { [weak self] in
+                self?.onFailure?(reason, !verificationFailed)
+            }
         }
     }
 }
